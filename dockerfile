@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Check if the driver is installed     
-RUN nvidia-smi
+# RUN nvidia-smi
 
 # Install the driver
 RUN apt-get update && apt-get install -y nvidia-driver-552
