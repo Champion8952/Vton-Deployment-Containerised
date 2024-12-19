@@ -5,11 +5,13 @@ FROM nvidia/cuda:11.8.0-base-ubuntu22.04
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
 
-# Install Python and required tools
+# Install Python, pip, and required libraries
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
+    libgl1 \
+    libglib2.0-0 \
     && apt-get clean
 
 # Create a symlink for 'python'
