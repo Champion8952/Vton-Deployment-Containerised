@@ -51,13 +51,13 @@ class TryOnInferenceEngine:
 
         # Load model components
         components = {
-            "scheduler": DDPMScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler", cache_dir="downloaded_models", torch_dtype=torch.float32),
-            "vae": AutoencoderKL.from_pretrained(MODEL_PATH, subfolder="vae", cache_dir="downloaded_models", torch_dtype=torch.float32),
-            "unet": UNet2DConditionModel.from_pretrained(MODEL_PATH, subfolder="unet", cache_dir="downloaded_models", torch_dtype=torch.float32),
-            "image_encoder": CLIPVisionModelWithProjection.from_pretrained(MODEL_PATH, subfolder="image_encoder", cache_dir="downloaded_models", torch_dtype=torch.float32),
-            "unet_encoder": UNet2DConditionModel_ref.from_pretrained(MODEL_PATH, subfolder="unet_encoder", cache_dir="downloaded_models", torch_dtype=torch.float32),
-            "text_encoder": CLIPTextModel.from_pretrained(MODEL_PATH, subfolder="text_encoder", cache_dir="downloaded_models", torch_dtype=torch.float32),
-            "text_encoder_2": CLIPTextModelWithProjection.from_pretrained(MODEL_PATH, subfolder="text_encoder_2", cache_dir="downloaded_models", torch_dtype=torch.float32),
+            "scheduler": DDPMScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler", cache_dir="downloaded_models", torch_dtype=torch.float16),
+            "vae": AutoencoderKL.from_pretrained(MODEL_PATH, subfolder="vae", cache_dir="downloaded_models", torch_dtype=torch.float16),
+            "unet": UNet2DConditionModel.from_pretrained(MODEL_PATH, subfolder="unet", cache_dir="downloaded_models", torch_dtype=torch.float16),
+            "image_encoder": CLIPVisionModelWithProjection.from_pretrained(MODEL_PATH, subfolder="image_encoder", cache_dir="downloaded_models", torch_dtype=torch.float16),
+            "unet_encoder": UNet2DConditionModel_ref.from_pretrained(MODEL_PATH, subfolder="unet_encoder", cache_dir="downloaded_models", torch_dtype=torch.float16),
+            "text_encoder": CLIPTextModel.from_pretrained(MODEL_PATH, subfolder="text_encoder", cache_dir="downloaded_models", torch_dtype=torch.float16),
+            "text_encoder_2": CLIPTextModelWithProjection.from_pretrained(MODEL_PATH, subfolder="text_encoder_2", cache_dir="downloaded_models", torch_dtype=torch.float16),
             "tokenizer": AutoTokenizer.from_pretrained(MODEL_PATH, subfolder="tokenizer", use_fast=False, cache_dir="downloaded_models"),
             "tokenizer_2": AutoTokenizer.from_pretrained(MODEL_PATH, subfolder="tokenizer_2", use_fast=False, cache_dir="downloaded_models")
         }
@@ -75,13 +75,13 @@ class TryOnInferenceEngine:
             scheduler=components["scheduler"],
             image_encoder=components["image_encoder"],
             unet_encoder=components["unet_encoder"],
-            torch_dtype=torch.float32,
+            torch_dtype=torch.float16,
         ).to(self.device)
 
         # Enable optimizations
-        if hasattr(pipe, "enable_xformers_memory_efficient_attention"):
-            pipe.enable_xformers_memory_efficient_attention()
-        pipe.enable_vae_slicing()
+        # if hasattr(pipe, "enable_xformers_memory_efficient_attention"):
+        #     pipe.enable_xformers_memory_efficient_attention()
+        # pipe.enable_vae_slicing()
 
         return pipe
 
@@ -172,21 +172,21 @@ class TryOnInferenceEngine:
             )
 
         # Prepare tensors
-        pose_img = self.transform(pose_img).unsqueeze(0).to(self.device, torch.float32)
-        garm_tensor = self.transform(cloth_image).unsqueeze(0).to(self.device, torch.float32)
+        pose_img = self.transform(pose_img).unsqueeze(0).to(self.device, torch.float16)
+        garm_tensor = self.transform(cloth_image).unsqueeze(0).to(self.device, torch.float16)
 
         # Generate image
         with torch.cuda.amp.autocast(), torch.no_grad():
             images = self.model(
-                prompt_embeds=prompt_embeds.to(self.device, torch.float32),
-                negative_prompt_embeds=negative_prompt_embeds.to(self.device, torch.float32),
-                pooled_prompt_embeds=pooled_prompt_embeds.to(self.device, torch.float32),
-                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(self.device, torch.float32),
+                prompt_embeds=prompt_embeds.to(self.device, torch.float16),
+                negative_prompt_embeds=negative_prompt_embeds.to(self.device, torch.float16),
+                pooled_prompt_embeds=pooled_prompt_embeds.to(self.device, torch.float16),
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(self.device, torch.float16),
                 num_inference_steps=denoise_steps,
                 generator=torch.Generator(self.device).manual_seed(42),
                 strength=1.0,
                 pose_img=pose_img,
-                text_embeds_cloth=prompt_embeds_c.to(self.device, torch.float32),
+                text_embeds_cloth=prompt_embeds_c.to(self.device, torch.float16),
                 cloth=garm_tensor,
                 mask_image=mask,
                 image=human_img,
