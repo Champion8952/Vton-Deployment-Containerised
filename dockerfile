@@ -9,7 +9,11 @@ ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
+    python3-venv \
     && apt-get clean
+
+# Create a symlink for 'python'
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Set the working directory
 WORKDIR /app
