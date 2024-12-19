@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 class Settings(BaseSettings):
-    MODEL_PATH: str = r"C:\Users\AdminAilusion\Desktop\AilusionModelRepo\Ailusion-VTON-DEMO-v1.1"
+    MODEL_PATH: str = r"Roopansh/Ailusion-VTON-DEMO-v1.1"
     MAX_BATCH_SIZE: int = 4
     MAX_QUEUE_SIZE: int = 16
     INFERENCE_TIMEOUT: int = 300
