@@ -10,6 +10,18 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Check if the driver is installed     
+RUN nvidia-smi
+
+# Install the driver
+RUN apt-get update && apt-get install -y nvidia-driver-552
+
+# Install the toolkit
+RUN apt-get update && apt-get install -y nvidia-cuda-toolkit
+
+# Check if the toolkit is installed
+RUN nvidia-smi
+
 # Copy project files into the container
 COPY . .
 
