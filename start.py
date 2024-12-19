@@ -7,7 +7,7 @@ if __name__ == "__main__":
     settings = get_settings()
     uvicorn.run(
         "server:app",
-        host="localhost",
+        host="0.0.0.0",
         port=settings.PORT,
         log_level="info",
         reload=True,
