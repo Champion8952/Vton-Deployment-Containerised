@@ -16,15 +16,21 @@ from transformers import (
     AutoTokenizer
 )
 from config import get_settings
-from utils import pil_to_binary_mask 
-from cloth_masker_2 import visualize_dense_labels
-from detectron2.data.detection_utils import convert_PIL_to_numpy,_apply_exif_orientation
+from cloth_masker import visualize_dense_labels
+from detectron2.data.detection_utils import convert_PIL_to_numpy
 import apply_net
+from model.SCHP import SCHP
+from model.DensePose import DensePose
 
 class TryOnInferenceEngine:
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
+        self.densepose = None
+        self.atr_model = None
+        self.lip_model = None
+        self.densepose_predictor = None
+        self.densepose_args = None
         self.transform = transforms.Compose([
             transforms.Resize((1024, 768)),
             transforms.ToTensor(),
@@ -36,7 +42,12 @@ class TryOnInferenceEngine:
         if self.model is not None:
             return
         try:
-            self.model = self._load_models()
+            self.model, self.densepose, self.atr_model, self.lip_model = self._load_models()
+            self.densepose_args = apply_net.create_argument_parser().parse_args((
+                'show', './pretrained/densepose_rcnn_R_50_FPN_s1x.yaml', 
+                './pretrained/model_final_162be9.pkl', 'dp_segm', 
+                '-v', '--opts', 'MODEL.DEVICE', 'cuda'
+            ))
         except Exception as e:
             raise Exception(f"Model initialization failed: {str(e)}")
 
@@ -77,13 +88,17 @@ class TryOnInferenceEngine:
             unet_encoder=components["unet_encoder"],
             torch_dtype=torch.float16,
         ).to(self.device)
+        
+        densepose_ckpt = "./pretrained"
+        schp_ckpt = "./pretrained"
+        
+        # Create DensePose predictor
+        densepose = DensePose(densepose_ckpt, device="cuda")
+        # SCHP Predictor
+        atr_model = SCHP(ckpt_path=os.path.join(schp_ckpt, 'exp-schp-201908301523-atr.pth'), device="cuda")
+        lip_model = SCHP(ckpt_path=os.path.join(schp_ckpt, 'exp-schp-201908261155-lip.pth'), device="cuda")
 
-        # Enable optimizations
-        # if hasattr(pipe, "enable_xformers_memory_efficient_attention"):
-        #     pipe.enable_xformers_memory_efficient_attention()
-        # pipe.enable_vae_slicing()
-
-        return pipe
+        return pipe, densepose, atr_model, lip_model
 
     def _process_human_image(self, human_img_orig: Image.Image) -> Image.Image:
         """Process human image with padding and resizing"""
@@ -112,8 +127,10 @@ class TryOnInferenceEngine:
         
         try:
             human_img.save(temp_path)
-            mask = visualize_dense_labels(temp_path)
+            mask = visualize_dense_labels(temp_path, self.densepose, self.atr_model, self.lip_model)
             mask_pil = Image.fromarray(mask)
+            # Save mask
+            # mask_pil.save(os.path.join("model", f"mask_{temp_id}.jpg"))
             return mask_pil.resize((768, 1024))
         finally:
             if os.path.exists(temp_path):
@@ -121,32 +138,27 @@ class TryOnInferenceEngine:
        
     async def process_images(self, person_image: Image.Image, cloth_image: Image.Image, 
                             garment_des: str = "", 
-                           denoise_steps: int = 30) -> Image.Image:
+                           denoise_steps: int = 27) -> Image.Image:
 
         """Process person and cloth images to generate try-on result"""
         if not self.model:
             raise ValueError("Model not initialized")
         
-        # Process images with EXIF orientation preserved
-        cloth_image = ImageOps.exif_transpose(cloth_image.convert("RGB")).resize((768, 1024))
+        # Move image processing to GPU where possible
+        cloth_image = ImageOps.exif_transpose(cloth_image.convert("RGB"))
         human_img_orig = ImageOps.exif_transpose(person_image.convert("RGB"))
         
         human_img = self._process_human_image(human_img_orig)
         mask = self._generate_mask(human_img)
+        cloth_image = self._process_human_image(cloth_image)
 
-        # Generate pose image
+        # Use pre-initialized predictor for DensePose
         human_img_arg = convert_PIL_to_numpy(
-            ImageOps.exif_transpose(human_img.resize((384, 512))), 
+            ImageOps.exif_transpose(human_img.resize((768, 1024))), 
             format="BGR"
         )
         
-        args = apply_net.create_argument_parser().parse_args((
-            'show', './configs/densepose_rcnn_R_50_FPN_s1x.yaml', 
-            './ckpt/densepose/model_final_162be9.pkl', 'dp_segm', 
-            '-v', '--opts', 'MODEL.DEVICE', 'cuda'
-        ))
-        
-        pose_img = args.func(args, human_img_arg)
+        pose_img = self.densepose_args.func(self.densepose_args, human_img_arg)
         pose_img = pose_img[:,:,::-1]
         pose_img = Image.fromarray(pose_img).resize((768, 1024))
 
@@ -192,7 +204,7 @@ class TryOnInferenceEngine:
                 image=human_img,
                 height=1024,
                 width=768,
-                ip_adapter_image=cloth_image.resize((768, 1024)),
+                ip_adapter_image=cloth_image,
                 guidance_scale=2.0,
             )[0]
 
