@@ -219,114 +219,49 @@ class TryOnInferenceEngine:
         cloth_prompt = f"A T shirt {garment_des}"  # Added cloth-specific prompt
         negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
 
-        # Generate embeddings with optimization if available
+        # Generate embeddings
         with torch.inference_mode():
-            if self.use_triton:
-                compile_options = {
-                    "max_autotune": True,
-                    "layout_optimization": True,
-                    "triton.autotune_pointwise": True,
-                    "triton.autotune_cublasLt": True,
-                    "triton.max_tiles": 1024,
-                    "triton.persistent_reductions": True
-                }
-                prompt_embeds_fn = torch.compile(
-                    self.model.encode_prompt, 
-                    backend='inductor',
-                    options=compile_options
-                )
-                # Main prompt embeddings
-                prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = \
-                    prompt_embeds_fn(
-                        prompt,
-                        num_images_per_prompt=1,
-                        do_classifier_free_guidance=True,
-                        negative_prompt=negative_prompt,
-                    )
-                # Cloth prompt embeddings
-                prompt_embeds_c, _, _, _ = prompt_embeds_fn(
-                    [prompt] if not isinstance(prompt, List) else prompt,
+            # Main prompt embeddings
+            prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = \
+                self.model.encode_prompt(
+                    prompt,
                     num_images_per_prompt=1,
-                    do_classifier_free_guidance=False,
-                    negative_prompt=[negative_prompt] if not isinstance(negative_prompt, List) else negative_prompt,
+                    do_classifier_free_guidance=True,
+                    negative_prompt=negative_prompt,
                 )
-            else:
-                # Main prompt embeddings
-                prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = \
-                    self.model.encode_prompt(
-                        prompt,
-                        num_images_per_prompt=1,
-                        do_classifier_free_guidance=True,
-                        negative_prompt=negative_prompt,
-                    )
-                # Cloth prompt embeddings
-                prompt_embeds_c, _, _, _ = self.model.encode_prompt(
-                    [prompt] if not isinstance(prompt, List) else prompt,
-                    num_images_per_prompt=1,
-                    do_classifier_free_guidance=False,
-                    negative_prompt=[negative_prompt] if not isinstance(negative_prompt, List) else negative_prompt,
-                )
+            # Cloth prompt embeddings
+            prompt_embeds_c, _, _, _ = self.model.encode_prompt(
+                [prompt] if not isinstance(prompt, List) else prompt,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=False,
+                negative_prompt=[negative_prompt] if not isinstance(negative_prompt, List) else negative_prompt,
+            )
 
         # Prepare tensors
         pose_img = self.transform(pose_img).unsqueeze(0).to(self.device, torch.float16)
         garm_tensor = self.transform(cloth_image).unsqueeze(0).to(self.device, torch.float16)
 
-        # Generate image with optimizations if available
+        # Generate image
         with torch.cuda.amp.autocast(), torch.no_grad():
-            if self.use_triton:
-                # Compile the forward pass with inductor backend
-                model_fn = torch.compile(
-                    self.model,
-                    backend='inductor',
-                    options={
-                        "max_autotune": True,
-                        "layout_optimization": True,
-                        "triton.autotune_pointwise": True,
-                        "triton.autotune_cublasLt": True,
-                        "triton.max_tiles": 1024,
-                        "triton.persistent_reductions": True
-                    }
-                )
-                images = model_fn(
-                    prompt_embeds=prompt_embeds.to(self.device, torch.float16),
-                    negative_prompt_embeds=negative_prompt_embeds.to(self.device, torch.float16),
-                    pooled_prompt_embeds=pooled_prompt_embeds.to(self.device, torch.float16),
-                    negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(self.device, torch.float16),
-                    num_inference_steps=denoise_steps,
-                    generator=torch.Generator(self.device).manual_seed(42),
-                    strength=1.0,
-                    pose_img=pose_img,
-                    text_embeds_cloth=prompt_embeds_c.to(self.device, torch.float16),
-                    cloth=garm_tensor,
-                    mask_image=mask,
-                    image=human_img,
-                    height=1024,
-                    width=768,
-                    ip_adapter_image=cloth_image,
-                    guidance_scale=2.0,
-                    use_compile=True
-                )[0]
-            else:
-                # Original non-Triton processing
-                images = self.model(
-                    prompt_embeds=prompt_embeds.to(self.device, torch.float16),
-                    negative_prompt_embeds=negative_prompt_embeds.to(self.device, torch.float16),
-                    pooled_prompt_embeds=pooled_prompt_embeds.to(self.device, torch.float16),
-                    negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(self.device, torch.float16),
-                    num_inference_steps=denoise_steps,
-                    generator=torch.Generator(self.device).manual_seed(42),
-                    strength=1.0,
-                    pose_img=pose_img,
-                    text_embeds_cloth=prompt_embeds_c.to(self.device, torch.float16),
-                    cloth=garm_tensor,
-                    mask_image=mask,
-                    image=human_img,
-                    height=1024,
-                    width=768,
-                    ip_adapter_image=cloth_image,
-                    guidance_scale=2.0,
-                    use_compile=True
-                )[0]
+            images = self.model(
+                prompt_embeds=prompt_embeds.to(self.device, torch.float16),
+                negative_prompt_embeds=negative_prompt_embeds.to(self.device, torch.float16),
+                pooled_prompt_embeds=pooled_prompt_embeds.to(self.device, torch.float16),
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(self.device, torch.float16),
+                num_inference_steps=denoise_steps,
+                generator=torch.Generator(self.device).manual_seed(42),
+                strength=1.0,
+                pose_img=pose_img,
+                text_embeds_cloth=prompt_embeds_c.to(self.device, torch.float16),
+                cloth=garm_tensor,
+                mask_image=mask,
+                image=human_img,
+                height=1024,
+                width=768,
+                ip_adapter_image=cloth_image,
+                guidance_scale=2.0,
+                use_compile=True
+            )[0]
 
             return images[0]
 
