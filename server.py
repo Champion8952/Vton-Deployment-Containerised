@@ -189,7 +189,9 @@ class TryOnInferenceEngine:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
        
-    async def process_images(self, person_image: Image.Image, cloth_image: Image.Image, garment_des: str = "",  denoise_steps: int = 20) -> Image.Image:
+    async def process_images(self, person_image: Image.Image, cloth_image: Image.Image, 
+                            garment_des: str = "", 
+                            denoise_steps: int = 20) -> Image.Image:
         """Process person and cloth images to generate try-on result"""
         if not self.model:
             raise ValueError("Model not initialized")
@@ -217,10 +219,22 @@ class TryOnInferenceEngine:
         cloth_prompt = f"A T shirt {garment_des}"  # Added cloth-specific prompt
         negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
 
-        # Generate embeddings with Triton optimization if available
+        # Generate embeddings with optimization if available
         with torch.inference_mode():
             if self.use_triton:
-                prompt_embeds_fn = torch.compile(self.model.encode_prompt, backend="triton")
+                compile_options = {
+                    "max_autotune": True,
+                    "layout_optimization": True,
+                    "triton.autotune_pointwise": True,
+                    "triton.autotune_cublasLt": True,
+                    "triton.max_tiles": 1024,
+                    "triton.persistent_reductions": True
+                }
+                prompt_embeds_fn = torch.compile(
+                    self.model.encode_prompt, 
+                    backend='inductor',
+                    options=compile_options
+                )
                 # Main prompt embeddings
                 prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = \
                     prompt_embeds_fn(
@@ -257,14 +271,21 @@ class TryOnInferenceEngine:
         pose_img = self.transform(pose_img).unsqueeze(0).to(self.device, torch.float16)
         garm_tensor = self.transform(cloth_image).unsqueeze(0).to(self.device, torch.float16)
 
-        # Generate image with Triton optimizations if available
+        # Generate image with optimizations if available
         with torch.cuda.amp.autocast(), torch.no_grad():
             if self.use_triton:
-                # Compile the forward pass with Triton
+                # Compile the forward pass with inductor backend
                 model_fn = torch.compile(
                     self.model,
-                    backend="triton",
-                    mode="max-autotune"
+                    backend='inductor',
+                    options={
+                        "max_autotune": True,
+                        "layout_optimization": True,
+                        "triton.autotune_pointwise": True,
+                        "triton.autotune_cublasLt": True,
+                        "triton.max_tiles": 1024,
+                        "triton.persistent_reductions": True
+                    }
                 )
                 images = model_fn(
                     prompt_embeds=prompt_embeds.to(self.device, torch.float16),
