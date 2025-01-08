@@ -77,14 +77,20 @@ class TryOnInferenceEngine:
                     self.model.unet = torch.compile(
                         self.model.unet, 
                         backend='inductor',
-                        mode="max-autotune",
-                        options={"triton.autotune": True}
+                        options={
+                            "triton.autotune": True,
+                            "max_autotune": True,
+                            "layout_optimization": True
+                        }
                     )
                     self.model.vae = torch.compile(
                         self.model.vae, 
                         backend='inductor',
-                        mode="max-autotune",
-                        options={"triton.autotune": True}
+                        options={
+                            "triton.autotune": True,
+                            "max_autotune": True,
+                            "layout_optimization": True
+                        }
                     )
                     print("Models compiled with Triton-enabled inductor backend")
                 except Exception as compile_error:
