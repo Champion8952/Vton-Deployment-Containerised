@@ -74,23 +74,24 @@ class TryOnInferenceEngine:
             if self.use_triton:
                 try:
                     # Use inductor backend with Triton acceleration
+                    compile_options = {
+                        "max_autotune": True,
+                        "layout_optimization": True,
+                        "triton.autotune_pointwise": True,  # Enable Triton autotuning for pointwise ops
+                        "triton.autotune_cublasLt": True,   # Enable Triton autotuning for CUBLAS
+                        "triton.max_tiles": 1024,           # Increase max tiles for better parallelization
+                        "triton.persistent_reductions": True # Enable persistent reduction kernels
+                    }
+                    
                     self.model.unet = torch.compile(
                         self.model.unet, 
                         backend='inductor',
-                        options={
-                            "triton.autotune": True,
-                            "max_autotune": True,
-                            "layout_optimization": True
-                        }
+                        options=compile_options
                     )
                     self.model.vae = torch.compile(
                         self.model.vae, 
                         backend='inductor',
-                        options={
-                            "triton.autotune": True,
-                            "max_autotune": True,
-                            "layout_optimization": True
-                        }
+                        options=compile_options
                     )
                     print("Models compiled with Triton-enabled inductor backend")
                 except Exception as compile_error:
