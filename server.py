@@ -217,11 +217,6 @@ CORS(app)
 engine = TryOnInferenceEngine()
 engine.initialize_model()
 
-# Instead, initialize the model when the first request is received
-# @app.before_first_request
-# def initialize():
-#     engine.initialize_model()
-
 @app.route("/try_on", methods=['POST'])
 def try_on():
     """Handle try-on requests"""
@@ -251,7 +246,6 @@ def try_on():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    # finally:
 
 @app.route("/health")
 def health_check():
