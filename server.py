@@ -72,18 +72,24 @@ class TryOnInferenceEngine:
             
             # Apply Triton optimizations if available
             if self.use_triton:
-                # Compile models with Triton backend
-                self.model.unet = torch.compile(
-                    self.model.unet, 
-                    backend="triton",
-                    mode="max-autotune"
-                )
-                self.model.vae = torch.compile(
-                    self.model.vae, 
-                    backend="triton",
-                    mode="max-autotune"
-                )
-                print("Models compiled with Triton backend")
+                try:
+                    # Use inductor backend with Triton acceleration
+                    self.model.unet = torch.compile(
+                        self.model.unet, 
+                        backend='inductor',
+                        mode="max-autotune",
+                        options={"triton.autotune": True}
+                    )
+                    self.model.vae = torch.compile(
+                        self.model.vae, 
+                        backend='inductor',
+                        mode="max-autotune",
+                        options={"triton.autotune": True}
+                    )
+                    print("Models compiled with Triton-enabled inductor backend")
+                except Exception as compile_error:
+                    print(f"Model compilation failed, falling back to default: {str(compile_error)}")
+                    self.use_triton = False
             
             self.densepose_args = apply_net.create_argument_parser().parse_args((
                 'show', './pretrained/densepose_rcnn_R_50_FPN_s1x.yaml', 
