@@ -8,7 +8,7 @@ if __name__ == "__main__":
         app, 
         host="0.0.0.0",
         port=settings.PORT,
-        threads=10,
+        threads=30,
         connection_limit=1000,
         channel_timeout=300,
         ident="TryOn Server"
