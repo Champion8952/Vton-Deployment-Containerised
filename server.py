@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from flask import Flask, request, jsonify, send_file
+from flask.wrappers import Response
+from flask_cors import CORS
 import torch
 from PIL import Image, ImageOps
 import os
@@ -16,27 +16,39 @@ from transformers import (
     AutoTokenizer
 )
 from config import get_settings
-from utils import pil_to_binary_mask 
-from cloth_masker_2 import visualize_dense_labels
-from detectron2.data.detection_utils import convert_PIL_to_numpy,_apply_exif_orientation
+from cloth_masker import visualize_dense_labels
+from detectron2.data.detection_utils import convert_PIL_to_numpy
 import apply_net
+from model.SCHP import SCHP
+from model.DensePose import DensePose
+import asyncio
 
 class TryOnInferenceEngine:
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
+        self.densepose = None
+        self.atr_model = None
+        self.lip_model = None
+        self.densepose_predictor = None
+        self.densepose_args = None
         self.transform = transforms.Compose([
             transforms.Resize((1024, 768)),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5])
         ])
 
-    async def initialize_model(self):
+    def initialize_model(self):
         """Initialize the model if not already loaded"""
         if self.model is not None:
             return
         try:
-            self.model = self._load_models()
+            self.model, self.densepose, self.atr_model, self.lip_model = self._load_models()
+            self.densepose_args = apply_net.create_argument_parser().parse_args((
+                'show', './pretrained/densepose_rcnn_R_50_FPN_s1x.yaml', 
+                './pretrained/model_final_162be9.pkl', 'dp_segm', 
+                '-v', '--opts', 'MODEL.DEVICE', 'cuda'
+            ))
         except Exception as e:
             raise Exception(f"Model initialization failed: {str(e)}")
 
@@ -77,15 +89,19 @@ class TryOnInferenceEngine:
             unet_encoder=components["unet_encoder"],
             torch_dtype=torch.float16,
         ).to(self.device)
+        
+        densepose_ckpt = "./pretrained"
+        schp_ckpt = "./pretrained"
+        
+        # Create DensePose predictor
+        densepose = DensePose(densepose_ckpt, device="cuda")
+        # SCHP Predictor
+        atr_model = SCHP(ckpt_path=os.path.join(schp_ckpt, 'exp-schp-201908301523-atr.pth'), device="cuda")
+        lip_model = SCHP(ckpt_path=os.path.join(schp_ckpt, 'exp-schp-201908261155-lip.pth'), device="cuda")
 
-        # Enable optimizations
-        # if hasattr(pipe, "enable_xformers_memory_efficient_attention"):
-        #     pipe.enable_xformers_memory_efficient_attention()
-        # pipe.enable_vae_slicing()
+        return pipe, densepose, atr_model, lip_model
 
-        return pipe
-
-    def _process_human_image(self, human_img_orig: Image.Image) -> Image.Image:
+    async def _process_human_image(self, human_img_orig: Image.Image) -> Image.Image:
         """Process human image with padding and resizing"""
         
         width, height = human_img_orig.size
@@ -105,14 +121,14 @@ class TryOnInferenceEngine:
 
         return padded_img.resize((768, 1024))
 
-    def _generate_mask(self, human_img: Image.Image) -> Image.Image:
+    async def _generate_mask(self, human_img: Image.Image) -> Image.Image:
         """Generate mask for the human image"""
         temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
         temp_path = os.path.join("model", f"temp_input_{temp_id}.jpg")
         
         try:
             human_img.save(temp_path)
-            mask = visualize_dense_labels(temp_path)
+            mask = visualize_dense_labels(temp_path, self.densepose, self.atr_model, self.lip_model)
             mask_pil = Image.fromarray(mask)
             return mask_pil.resize((768, 1024))
         finally:
@@ -121,32 +137,27 @@ class TryOnInferenceEngine:
        
     async def process_images(self, person_image: Image.Image, cloth_image: Image.Image, 
                             garment_des: str = "", 
-                           denoise_steps: int = 30) -> Image.Image:
+                           denoise_steps: int = 20) -> Image.Image:
 
         """Process person and cloth images to generate try-on result"""
         if not self.model:
             raise ValueError("Model not initialized")
         
-        # Process images with EXIF orientation preserved
-        cloth_image = ImageOps.exif_transpose(cloth_image.convert("RGB")).resize((768, 1024))
+        # Move image processing to GPU where possible
+        cloth_image = ImageOps.exif_transpose(cloth_image.convert("RGB"))
         human_img_orig = ImageOps.exif_transpose(person_image.convert("RGB"))
         
-        human_img = self._process_human_image(human_img_orig)
-        mask = self._generate_mask(human_img)
+        human_img = await self._process_human_image(human_img_orig)
+        mask = await self._generate_mask(human_img)
+        cloth_image = await self._process_human_image(cloth_image)
 
-        # Generate pose image
+        # Use pre-initialized predictor for DensePose
         human_img_arg = convert_PIL_to_numpy(
-            ImageOps.exif_transpose(human_img.resize((384, 512))), 
+            ImageOps.exif_transpose(human_img.resize((768, 1024))), 
             format="BGR"
         )
         
-        args = apply_net.create_argument_parser().parse_args((
-            'show', './configs/densepose_rcnn_R_50_FPN_s1x.yaml', 
-            './ckpt/densepose/model_final_162be9.pkl', 'dp_segm', 
-            '-v', '--opts', 'MODEL.DEVICE', 'cuda'
-        ))
-        
-        pose_img = args.func(args, human_img_arg)
+        pose_img = self.densepose_args.func(self.densepose_args, human_img_arg)
         pose_img = pose_img[:,:,::-1]
         pose_img = Image.fromarray(pose_img).resize((768, 1024))
 
@@ -192,87 +203,64 @@ class TryOnInferenceEngine:
                 image=human_img,
                 height=1024,
                 width=768,
-                ip_adapter_image=cloth_image.resize((768, 1024)),
+                ip_adapter_image=cloth_image,
                 guidance_scale=2.0,
+                use_compile=True
             )[0]
 
             return images[0]
 
-
-# FastAPI app setup
-app = FastAPI(title="Virtual Try-On API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = Flask(__name__)
+CORS(app)
 
 # Initialize engine
 engine = TryOnInferenceEngine()
+engine.initialize_model()
 
-@app.on_event("startup")
-async def startup_event():
-    await engine.initialize_model()
+# Instead, initialize the model when the first request is received
+# @app.before_first_request
+# def initialize():
+#     engine.initialize_model()
 
-@app.post("/try_on")
-async def try_on(request: Request):
+@app.route("/try_on", methods=['POST'])
+def try_on():
     """Handle try-on requests"""
-    form = await request.form()
-    
-    if 'cloth_image' not in form or 'human_image' not in form:
-        raise HTTPException(status_code=400, detail="Missing images in request")
+    if engine.model is None:
+        engine.initialize_model()
 
-    # Create model directory
-    os.makedirs("model", exist_ok=True)
-
-    # Generate unique temp file names
-    temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
-    temp_files = {
-        'cloth': os.path.join("model", f"cloth_image{temp_id}.jpg"),
-        'human': os.path.join("model", f"human_image{temp_id}.jpg"),
-        'output': os.path.join("model", f"output_image{temp_id}.jpg")
-    }
+    if 'cloth_image' not in request.files or 'human_image' not in request.files:
+        return jsonify({"error": "Missing images in request"}), 400
 
     try:
-        # Save uploaded files
-        cloth_contents = await form['cloth_image'].read()
-        human_contents = await form['human_image'].read()
+        cloth_img = Image.open(request.files['cloth_image']).convert('RGB')
+        human_img = Image.open(request.files['human_image']).convert('RGB')
         
-        for path, contents in [
-            (temp_files['cloth'], cloth_contents),
-            (temp_files['human'], human_contents)
-        ]:
-            with open(path, 'wb') as f:
-                f.write(contents)
-
-        # Process images
-        cloth_img = Image.open(temp_files['cloth']).convert('RGB')
-        human_img = Image.open(temp_files['human']).convert('RGB')
+        # Run async function in event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(engine.process_images(human_img, cloth_img))
+        loop.close()
         
-        # Generate result
-        result = await engine.process_images(human_img, cloth_img)
+        # Convert PIL Image to bytes
+        import io
+        img_io = io.BytesIO()
+        result.save(img_io, format='JPEG')
+        img_io.seek(0)
         
-        # Save and return result
-        result.save(temp_files['output'], format='JPEG')
-        with open(temp_files['output'], 'rb') as f:
-            return Response(content=f.read(), media_type='image/jpeg')
+        return send_file(img_io, mimetype='image/jpeg')
 
-    finally:
-        # Cleanup
-        for path in temp_files.values():
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except Exception:
-                pass
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    # finally:
 
-@app.get("/health")
-async def health_check():
+@app.route("/health")
+def health_check():
     """Check API health status"""
-    return {
+    return jsonify({
         "status": "healthy",
         "gpu_available": torch.cuda.is_available(),
         "gpu_device": str(engine.device)
-    }
+    })
+
+if __name__ == "__main__":
+    app.run()
