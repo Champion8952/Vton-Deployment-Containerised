@@ -46,7 +46,7 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0", 
         port=8002,
-        threads=len(engines) * 3,  # Scale threads with number of engines
+        threads=len(engines) * len(engines),  # Scale threads with number of engines
         connection_limit=1000,
         channel_timeout=300,
         ident="TryOn Server"

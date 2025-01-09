@@ -93,7 +93,6 @@ class TryOnInferenceEngine:
                         backend='inductor',
                         options=compile_options
                     )
-                    print("Models compiled with Triton-enabled inductor backend")
                 except Exception as compile_error:
                     print(f"Model compilation failed, falling back to default: {str(compile_error)}")
                     self.use_triton = False
@@ -196,23 +195,13 @@ class TryOnInferenceEngine:
         if not self.model:
             raise ValueError("Model not initialized")
         
-        print("Starting image processing...")
-        
-        # Move image processing to GPU where possible
         cloth_image = ImageOps.exif_transpose(cloth_image.convert("RGB"))
         human_img_orig = ImageOps.exif_transpose(person_image.convert("RGB"))
         
-        print("Processing human image...")
         human_img = await self._process_human_image(human_img_orig)
-        
-        print("Generating mask...")
         mask = await self._generate_mask(human_img)
-        
-        print("Processing cloth image...")
         cloth_image = await self._process_human_image(cloth_image)
 
-        # Use pre-initialized predictor for DensePose
-        print("Applying DensePose...")
         human_img_arg = convert_PIL_to_numpy(
             ImageOps.exif_transpose(human_img.resize((768, 1024))), 
             format="BGR"
@@ -222,13 +211,10 @@ class TryOnInferenceEngine:
         pose_img = pose_img[:,:,::-1]
         pose_img = Image.fromarray(pose_img).resize((768, 1024))
 
-        # Prepare prompts
-        print("Generating embeddings...")
         prompt = f"This garment is a T shirt {garment_des}"
         cloth_prompt = f"A T shirt {garment_des}"
         negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
 
-        # Generate embeddings
         with torch.inference_mode():
             prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = \
                 self.model.encode_prompt(
@@ -244,12 +230,9 @@ class TryOnInferenceEngine:
                 negative_prompt=[negative_prompt] if not isinstance(negative_prompt, List) else negative_prompt,
             )
 
-        # Prepare tensors
         pose_img = self.transform(pose_img).unsqueeze(0).to(self.device, torch.float16)
         garm_tensor = self.transform(cloth_image).unsqueeze(0).to(self.device, torch.float16)
 
-        # Generate image
-        print(f"Generating try-on image (steps: {denoise_steps})...")
         with torch.cuda.amp.autocast(), torch.no_grad():
             try:
                 images = self.model(
@@ -271,10 +254,8 @@ class TryOnInferenceEngine:
                     guidance_scale=2.0,
                     use_compile=True
                 )[0]
-                print("Try-on image generated successfully!")
                 return images[0]
             except Exception as e:
-                print(f"Error during image generation: {str(e)}")
                 raise
 
 app = Flask(__name__)
