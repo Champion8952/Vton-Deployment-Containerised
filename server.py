@@ -93,6 +93,18 @@ class TryOnInferenceEngine:
                         backend='inductor',
                         options=compile_options
                     )
+                    
+                    # Fine-tune Triton with a single sample request
+                    print("Fine-tuning Triton with sample request...")
+                    sample_human = Image.new('RGB', (768, 1024))
+                    sample_cloth = Image.new('RGB', (768, 1024))
+                    asyncio.run(self.process_images(
+                        sample_human, 
+                        sample_cloth,
+                        denoise_steps=2  # Reduced steps for faster training
+                    ))
+                    print("Triton fine-tuning complete")
+                    
                 except Exception as compile_error:
                     print(f"Model compilation failed, falling back to default: {str(compile_error)}")
                     self.use_triton = False
@@ -212,7 +224,6 @@ class TryOnInferenceEngine:
         pose_img = Image.fromarray(pose_img).resize((768, 1024))
 
         prompt = f"This garment is a T shirt {garment_des}"
-        cloth_prompt = f"A T shirt {garment_des}"
         negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
 
         with torch.inference_mode():
