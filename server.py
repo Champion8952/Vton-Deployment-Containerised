@@ -23,6 +23,7 @@ from model.SCHP import SCHP
 from model.DensePose import DensePose
 import asyncio
 import platform
+import gc  # Python's garbage collector module - helps free memory by collecting and destroying unreachable objects
 
 # Conditionally import Triton only on Linux
 if platform.system() == "Linux":
@@ -96,8 +97,8 @@ class TryOnInferenceEngine:
                     
                     # Fine-tune Triton with a single sample request
                     print("Fine-tuning Triton with sample request...")
-                    sample_human = Image.new('RGB', (768, 1024))
-                    sample_cloth = Image.new('RGB', (768, 1024))
+                    sample_human = Image.open('./example/human/sample_human.jpg').convert('RGB')
+                    sample_cloth = Image.open('./example/cloth/sample_cloth.jpg').convert('RGB')
                     asyncio.run(self.process_images(
                         sample_human, 
                         sample_cloth,
@@ -265,6 +266,14 @@ class TryOnInferenceEngine:
                     guidance_scale=2.0,
                     use_compile=True
                 )[0]
+                
+                # Clean up GPU memory by explicitly deleting tensors and running garbage collection
+                del prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds
+                del negative_pooled_prompt_embeds, prompt_embeds_c
+                del pose_img, garm_tensor
+                torch.cuda.empty_cache()
+                gc.collect()
+                
                 return images[0]
             except Exception as e:
                 raise
