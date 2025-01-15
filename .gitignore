@@ -1,0 +1,15 @@
+# Python cache files
+__pycache__/
+
+# Downloaded models
+downloaded_models/
+
+# Lock files
+*.locks
+
+# Pretrained model files
+pretrained/*.pt2
+pretrained/models--*
+
+# Keep pretrained directory structure
+!pretrained/.gitkeep 

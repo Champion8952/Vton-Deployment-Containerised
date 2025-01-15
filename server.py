@@ -26,9 +26,8 @@ from model.DensePose import DensePose
 import asyncio
 import platform
 import io
-import gc
 import logging
-import datetime
+from huggingface_hub import hf_hub_download
 
 # Configure logging
 logging.basicConfig(
@@ -140,7 +139,13 @@ class TryOnInferenceEngine:
         densepose = DensePose(os.path.join(os.getcwd(), 'pretrained'), device="cuda")
         atr_model = SCHP(ckpt_path=os.path.join(os.getcwd(), 'pretrained/exp-schp-201908301523-atr.pth'), device="cuda")
         lip_model = SCHP(ckpt_path=os.path.join(os.getcwd(), 'pretrained/exp-schp-201908261155-lip.pth'), device="cuda")
-        goliath_model = torch.jit.load(os.path.join(os.getcwd(), 'pretrained/sapiens_2b_goliath_best_goliath_mIoU_8131_epoch_200_torchscript.pt2'))
+        goliath_model = torch.jit.load(
+            hf_hub_download(
+                repo_id="Roopansh/Ailusion-Goliath-Segmentation",
+                filename="sapiens_2b_goliath_best_goliath_mIoU_8131_epoch_200_torchscript.pt2",
+                cache_dir="pretrained"
+            )
+        )
 
         logger.info(f"All models loaded in {time.time() - start_time:.2f} seconds")
         return pipe, densepose, atr_model, lip_model, goliath_model
