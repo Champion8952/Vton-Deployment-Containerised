@@ -1,114 +1,96 @@
-import os 
 import numpy as np
 import cv2
 from PIL import Image
-import argparse
 from typing import Union
-from scipy.ndimage import binary_dilation, binary_erosion
-from skimage.morphology import convex_hull_image
+from skimage.morphology import remove_small_holes, diameter_opening, area_closing, remove_small_objects
+from classes_and_palettes import GOLIATH_CLASSES
+import torch
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+import logging
 import time
-import random
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Simple Cloth Masker.")
-    parser.add_argument(
-        "--width",
-        type=int,
-        default=768,
-        help=(
-            "The resolution for input images, all the images in the train/validation dataset will be resized to this"
-            " resolution"
-        ),
-    )
-    parser.add_argument(
-        "--height",
-        type=int,
-        default=1024,
-        help=(
-            "The resolution for input images, all the images in the train/validation dataset will be resized to this"
-            " resolution"
-        ),
-    )
-    parser.add_argument(
-        "--allow_tf32",
-        action="store_true",
-        default=True,
-        help=(
-            "Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see"
-            " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
-        ),
-    )
-    parser.add_argument(
-        "--mixed_precision",
-        type=str,
-        default="bf16",
-        choices=["no", "fp16", "bf16"],
-        help=(
-            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
-            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
-            " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
-        ),
-    )
-    
-    args = parser.parse_args()
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
+class Config:
+    CHECKPOINTS_DIR = r"pretrained"
+    CHECKPOINTS = {
+        "1b": "sapiens_1b_goliath_best_goliath_mIoU_7994_epoch_151_torchscript.pt2",
+        "2b": "sapiens_2b_goliath_best_goliath_mIoU_8131_epoch_200_torchscript.pt2",
+    }
+    KEEP_CATEGORIES = [
+        "Upper_Clothing",
+        "Torso", 
+        "Right_Upper_Arm",
+        "Left_Upper_Arm",
+        "Right_Lower_Arm",
+        "Left_Lower_Arm"
+    ]
 
-    return args
+@staticmethod
+@torch.inference_mode()
+def run_model(model, input_tensor, height, width):
+    output = model(input_tensor)
+    output = F.interpolate(output, size=(height, width), mode="bilinear", align_corners=False)
+    _, preds = torch.max(output, 1)
+    return preds
 
+class ImageProcessor:
+    def __init__(self):
+        logger.info("Initializing ImageProcessor")
+        self.transform_fn = transforms.Compose([
+            transforms.Resize((1024, 768)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[123.5/255, 116.5/255, 103.5/255], 
+                              std=[58.5/255, 57.0/255, 57.5/255]),
+        ])
+        self.category_indices = {cat: idx for idx, cat in enumerate(GOLIATH_CLASSES)}
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.keep_categories = ["Upper_Clothing", "Torso", "Face_Neck", "Right_Upper_Arm", 
+                            "Right_Lower_Arm", "Left_Lower_Arm", "Left_Upper_Arm"]
+        self.keep_upper_body_indices = None
+        logger.info(f"ImageProcessor initialized with device: {self.device}")
+
+    def process_image(self, image: Image.Image, goliath_model):
+        start_time = time.time()
+        logger.info("Processing image with Goliath model")
+        
+        if self.keep_upper_body_indices is None:
+            self.keep_upper_body_indices = torch.tensor(
+                [self.category_indices[cat] for cat in self.keep_categories if cat in self.category_indices], 
+                device=self.device
+            )
+
+        model = goliath_model.to(self.device)
+        input_tensor = self.transform_fn(image).unsqueeze(0).to(self.device)
+
+        # TODO: Make this Faster 
+        with torch.inference_mode():
+            preds = run_model(model, input_tensor, image.height, image.width)
+            mask = preds.squeeze(0)
+            mask_upper_body = torch.zeros_like(mask, device=self.device)
+            
+            for idx in self.keep_upper_body_indices:
+                mask_upper_body[mask == idx] = 255
+
+            logger.info(f"Image processed in {time.time() - start_time:.2f} seconds")
+            return mask_upper_body.cpu()
 
 DENSE_INDEX_MAP = {
-    "background": [0],
-    "torso": [1, 2],
-    "right hand": [3],
-    "left hand": [4],
-    "right foot": [5],
-    "left foot": [6],
-    "right thigh": [7, 9],
-    "left thigh": [8, 10],
-    "right leg": [11, 13],
-    "left leg": [12, 14],
-    "left big arm": [15, 17],
-    "right big arm": [16, 18],
-    "left forearm": [19, 21],
-    "right forearm": [20, 22],
     "face": [23, 24],
-    "thighs": [7, 8, 9, 10],
-    "legs": [11, 12, 13, 14],
-    "hands": [3, 4],
-    "feet": [5, 6],
-    "big arms": [15, 16, 17, 18],
-    "forearms": [19, 20, 21, 22],
-    "neck": [25, 26],
-    "hair": [27, 28],
-}
-
-ATR_MAPPING = {
-    'Background': 0, 'Hat': 1, 'Hair': 2, 'Sunglasses': 3, 
-    'Upper-clothes': 4, 'Skirt': 5, 'Pants': 6, 'Dress': 7,
-    'Belt': 8, 'Left-shoe': 9, 'Right-shoe': 10, 'Face': 11, 
-    'Left-leg': 12, 'Right-leg': 13, 'Left-arm': 14, 'Right-arm': 15,
-    'Bag': 16, 'Scarf': 17
 }
 
 LIP_MAPPING = {
-    'Background': 0, 'Hat': 1, 'Hair': 2, 'Glove': 3, 
-    'Sunglasses': 4, 'Upper-clothes': 5, 'Dress': 6, 'Coat': 7,
-    'Socks': 8, 'Pants': 9, 'Jumpsuits': 10, 'Scarf': 11, 
-    'Skirt': 12, 'Face': 13, 'Left-arm': 14, 'Right-arm': 15,
-    'Left-leg': 16, 'Right-leg': 17, 'Left-shoe': 18, 'Right-shoe': 19
+    'Face': 13
 }
 
-PASCAL_PART_MAPPING = {
-    'background': 0, 'head': 1, 'torso': 2, 'upper_arm': 3,
-    'lower_arm': 4, 'hand': 5, 'upper_leg': 6, 'lower_leg': 7,
-    'foot': 8, 'neck': 9, 'hair': 10
-}
-
-def part_mask_of(part: Union[str, list],
-                parse: np.ndarray, mapping: dict):
+def part_mask_of(part: Union[str, list], parse: np.ndarray, mapping: dict):
     if isinstance(part, str):
         part = [part]
     mask = np.zeros_like(parse)
@@ -122,172 +104,52 @@ def part_mask_of(part: Union[str, list],
             mask += (parse == mapping[_])
     return mask
 
-def add_noise_and_denoise(image, noise_factor=0.1):
-    """Add Gaussian noise to image and denoise using bilateral filter"""
-    # Convert to float32 for noise addition
-    img_float = image.astype(np.float32) / 255.0
+def segment_image(image_input, densepose_model, atr_model, lip_model, goliath_model):
+    start_time = time.time()
+    logger.info("Starting image segmentation")
     
-    # Add Gaussian noise
-    noise = np.random.normal(0, noise_factor, img_float.shape)
-    noisy_img = img_float + noise
-    noisy_img = np.clip(noisy_img, 0, 1)
+    temp_image_path = image_input
+    image = Image.open(temp_image_path)
+
+    # Run face detection models in parallel
+    logger.info("Running face detection models")
+    lip_mask = np.array(lip_model(temp_image_path))
+    densepose_mask = np.array(densepose_model(temp_image_path))
+
+    # Create face masks
+    logger.info("Creating face masks")
+    lip_face_mask = part_mask_of('Face', lip_mask, LIP_MAPPING)
+    densepose_face_mask = part_mask_of('face', densepose_mask, DENSE_INDEX_MAP)
+
+    # Process upper body
+    logger.info("Processing upper body")
+    processor = ImageProcessor()
+    mask_upper_body = processor.process_image(image, goliath_model)
+    mask_upper_body_uint8 = (mask_upper_body.numpy() > 0).astype(np.uint8) * 255
+
+    # Combine face masks and remove from upper body
+    logger.info("Combining and processing masks")
+    combined_face_mask = np.logical_or(lip_face_mask, densepose_face_mask).astype(np.uint8) * 255
+    face_kernel = np.ones((5,5), np.uint8)
+    combined_face_mask = cv2.dilate(combined_face_mask, face_kernel, iterations=2)
+    mask_upper_body_uint8[combined_face_mask > 0] = 0
+
+    # Post-process mask
+    logger.info("Post-processing mask")
+    # Clean up mask with morphological operations
+    kernel = np.ones((15, 15), np.uint8)
+    logger.info("Removing small objects from mask")
+    mask_upper_body_uint8 = remove_small_objects(mask_upper_body_uint8 > 0, min_size=200)
     
-    # Convert back to uint8
-    noisy_img = (noisy_img * 255).astype(np.uint8)
+    logger.info("Dilating mask")
+    mask_upper_body_uint8 = cv2.dilate(mask_upper_body_uint8.astype(np.uint8) * 255, kernel, iterations=3)
     
-    # Apply bilateral filter for denoising
-    denoised_img = cv2.bilateralFilter(noisy_img, d=9, sigmaColor=75, sigmaSpace=75)
+    logger.info("Applying morphological closing operation") 
+    mask_upper_body_uint8 = cv2.morphologyEx(mask_upper_body_uint8, cv2.MORPH_CLOSE, kernel)
     
-    return denoised_img
+    logger.info("Applying Gaussian blur and thresholding")
+    blurred = cv2.GaussianBlur(mask_upper_body_uint8, (7, 7), 0)
+    _, mask_upper_body_uint8 = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
 
-def visualize_dense_labels(image_path, densepose, atr_model, lip_model):
-    """
-    Visualize DensePose labels on an image by detecting the main human and leaving the background.
-    
-    Args:
-        image_path: Path to input image
-        save_path: Optional path to save the visualization. If None, displays the image.
-    """
-    
-    # Read image and convert to numpy array
-    # Handle both PIL Image and string path inputs
-    img = np.array(Image.open(image_path))
-    
-    # Show image
-    # Image.fromarray(img).show()
-
-    height, width = img.shape[:2]
-
-
-    # Get predictions
-    dense_output = densepose(image_path)
-    dense_mask = np.array(dense_output)
-
-    # Create human mask (everything except background)
-    human_mask = (dense_mask != 0).astype(np.uint8)
-    
-    # Apply morphological operations to clean up the mask
-    kernel = np.ones((5,5), np.uint8)
-    human_mask = binary_dilation(human_mask, kernel, iterations=2)
-    human_mask = binary_erosion(human_mask, kernel, iterations=1)
-    
-    # Create convex hull to fill holes
-    human_mask = convex_hull_image(human_mask)
-
-    # Crop human mask image from original image
-    # Find bounding box of human mask
-    y_indices, x_indices = np.where(human_mask > 0)
-    if len(y_indices) > 0 and len(x_indices) > 0:
-        top, bottom = y_indices.min(), y_indices.max()
-        left, right = x_indices.min(), x_indices.max()
-        
-        # Add padding around the bounding box
-        padding = 10
-        top = max(0, top - padding)
-        bottom = min(height, bottom + padding)
-        left = max(0, left - padding)
-        right = min(width, right + padding)
-        
-        # Crop the image using the bounding box
-        cropped_img = img[top:bottom, left:right]
-        
-        # Create blank image of original size
-        blank_img = np.zeros_like(img)
-        
-        # Place cropped image back at original position
-        blank_img[top:bottom, left:right] = cropped_img
-        
-        # Save image temporarily
-        temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
-        temp_cropped_path = os.path.join(f"temp_cropped_{temp_id}.jpg")
-        Image.fromarray(blank_img).save(temp_cropped_path)
-
-    # Expand human_mask to 3 channels to match the image
-    human_mask_3ch = np.stack([human_mask] * 3, axis=-1)
-    blurred_img = cv2.GaussianBlur(img, (3,3), 0)
-    
-    # Create output image starting with blurred background
-    output_img = blurred_img.copy()
-    
-    # Apply human mask to keep original image in foreground
-    output_img = np.where(human_mask_3ch == 1, img, output_img)
-
-    temp_mask_path = temp_cropped_path 
-    
-    # SCHP Prediction
-    atr_mask = np.array(atr_model(temp_mask_path))
-    lip_mask = np.array(lip_model(temp_mask_path))
-
-    # Clean up temporary file
-    os.remove(temp_mask_path)
-
-    # Initialize masks
-    dense_parts_mask = np.zeros_like(dense_mask)
-    atr_clothes_mask = np.zeros_like(atr_mask)
-    lip_clothes_mask = np.zeros_like(lip_mask)
-    
-    # Masks to add in the Final Mask
-    # Define label arrays for each segmentation model
-    DENSEPOSE_PARTS = ["big arms", "forearms"]
-    ATR_PARTS = ['Upper-clothes', 'Belt', 'Scarf', 'Dress', 'Skirt', 'Coat']    
-    LIP_PARTS = []
-    
-    # Create DensePose part masks
-    for part_name in DENSEPOSE_PARTS:
-        if part_name in DENSE_INDEX_MAP:
-            indices = DENSE_INDEX_MAP[part_name]
-            for idx in indices:
-                dense_parts_mask = dense_parts_mask | (dense_mask == idx)
-                
-    # Create ATR part masks
-    for part_name in ATR_PARTS:
-        if part_name in ATR_MAPPING:
-            atr_clothes_mask = atr_clothes_mask | part_mask_of(part_name, atr_mask, ATR_MAPPING)
-
-    # Create LIP part masks  
-    for part_name in LIP_PARTS:
-        if part_name in LIP_MAPPING:
-            lip_clothes_mask = lip_clothes_mask | part_mask_of(part_name, lip_mask, LIP_MAPPING)
-
-    # Combine all masks with boolean operations
-    combined_mask = np.zeros_like(atr_clothes_mask)
-    combined_mask = np.logical_or(combined_mask, dense_parts_mask)
-    combined_mask = np.logical_or(combined_mask, atr_clothes_mask)
-    combined_mask = np.logical_or(combined_mask, lip_clothes_mask)
-    
-    # Clean up mask using morphological operations
-    combined_mask = binary_dilation(combined_mask, iterations=2)
-    combined_mask = binary_erosion(combined_mask, iterations=1)
-
-    # Add convex hull to fill holes
-    combined_mask = convex_hull_image(combined_mask)
-
-    # Labels to be removed from the final mask
-    dense_labels_to_remove = ['hands']
-    atr_labels_to_remove = []
-    lip_labels_to_remove = ['Face', 'Hair']
-    
-    # Remove areas from DensePose mask
-    for label in dense_labels_to_remove:
-        if label in DENSE_INDEX_MAP:
-            indices = DENSE_INDEX_MAP[label]
-            for idx in indices:
-                combined_mask[dense_mask == idx] = 0
-
-    # Remove areas from ATR mask  
-    for label in atr_labels_to_remove:
-        if label in ATR_MAPPING:
-            idx = ATR_MAPPING[label]
-            combined_mask[atr_mask == idx] = 0
-
-    # Remove areas from LIP mask
-    for label in lip_labels_to_remove:
-        if label in LIP_MAPPING:
-            idx = LIP_MAPPING[label]
-            combined_mask[lip_mask == idx] = 0
-
-    # Clean up the refined mask
-    combined_mask = binary_dilation(combined_mask, iterations=1)
-    combined_mask = binary_erosion(combined_mask, iterations=1)
-
-    return combined_mask
+    logger.info(f"Image segmentation completed in {time.time() - start_time:.2f} seconds")
+    return mask_upper_body_uint8

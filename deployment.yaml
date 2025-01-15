@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtual-tryon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: virtual-tryon
+  template:
+    metadata:
+      labels:
+        app: virtual-tryon
+    spec:
+      containers:
+      - name: virtual-tryon
+        image: gcr.io/ailusion-vton-backend/virtual_tryon_parallel_engines
+        ports:
+        - containerPort: 8002
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-l4
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
