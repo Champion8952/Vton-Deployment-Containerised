@@ -18,7 +18,8 @@ from transformers import (
 import numpy as np
 from check_front_image import analyze_image
 from config import get_settings
-from cloth_masker import segment_image
+# from cloth_masker_without_goliath import visualize_dense_labels
+from cloth_masker_with_goliath import visualize_dense_labels
 from utils import convert_PIL_to_numpy
 import apply_net
 from model.SCHP import SCHP
@@ -142,7 +143,7 @@ class TryOnInferenceEngine:
         goliath_model = torch.jit.load(
             hf_hub_download(
                 repo_id="Roopansh/Ailusion-Goliath-Segmentation",
-                filename="sapiens_2b_goliath_best_goliath_mIoU_8131_epoch_200_torchscript.pt2",
+                filename="sapiens_1b_goliath_best_goliath_mIoU_7994_epoch_151_torchscript.pt2",
                 cache_dir="pretrained"
             )
         )
@@ -182,7 +183,9 @@ class TryOnInferenceEngine:
         
         try:
             human_img.save(temp_path)
-            mask = segment_image(temp_path, self.densepose, self.atr_model, self.lip_model, self.goliath_model)
+            # mask = segment_image(temp_path, self.densepose, self.atr_model, self.lip_model, self.goliath_model)
+            mask = visualize_dense_labels(temp_path, self.densepose, self.atr_model, self.lip_model, self.goliath_model)
+            # mask = visualize_dense_labels(temp_path, self.densepose, self.atr_model, self.lip_model)
             result = Image.fromarray(mask).resize((768, 1024))
             logger.info(f"Mask generated in {time.time() - start_time:.2f} seconds")
             return result
@@ -251,8 +254,6 @@ class TryOnInferenceEngine:
                 )[0]
 
             logger.info("Cleaning up memory...")
-            # del prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds
-            # del negative_pooled_prompt_embeds, prompt_embeds_c
             del pose_img, garm_tensor
             # torch.cuda.empty_cache()
             # gc.collect()
@@ -371,4 +372,4 @@ def health_check():
 
 if __name__ == "__main__":
     logger.info("Starting Flask application...")
-    app.run()
+    app.run(debug=True)
