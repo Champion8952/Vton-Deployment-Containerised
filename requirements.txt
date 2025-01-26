@@ -40,8 +40,6 @@ lazy_loader==0.4
 llvmlite==0.43.0
 markdown-it-py==3.0.0
 matplotlib==3.9.3
-mdurl==0.1.2
-numba==0.60.0
 numpy
 nvidia-ml-py==12.560.30
 omegaconf==2.3.0
