@@ -247,7 +247,7 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
             blank_img[top:bottom, left:right] = cropped_img
             
             temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
-            temp_cropped_path = os.path.join(f"temp_cropped_{temp_id}.jpg")
+            temp_cropped_path = os.path.join("/tmp",f"temp_cropped_{temp_id}.jpg")
             
             try:
                 Image.fromarray(blank_img).save(temp_cropped_path)
