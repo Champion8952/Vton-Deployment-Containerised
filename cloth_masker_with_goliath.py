@@ -231,6 +231,12 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
         human_mask = binary_dilation(human_mask, kernel, iterations=2)
         human_mask = binary_erosion(human_mask, kernel, iterations=1)
 
+        # Crop the image to the human mask
+        tmp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "tmp"))
+        os.makedirs(tmp_dir, exist_ok=True)
+        temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
+        temp_cropped_path = os.path.join(tmp_dir, f"temp_cropped_{temp_id}.jpg")
+        
         y_indices, x_indices = np.where(human_mask > 0)
         if len(y_indices) > 0 and len(x_indices) > 0:
             top, bottom = y_indices.min(), y_indices.max()
@@ -246,15 +252,12 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
             blank_img = np.zeros_like(img)
             blank_img[top:bottom, left:right] = cropped_img
 
-            tmp_dir = os.path.join(os.getcwd(), "tmp")
-            os.makedirs(tmp_dir, exist_ok=True)
-            temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
-            temp_cropped_path = os.path.join(tmp_dir, f"temp_cropped_{temp_id}.jpg")
+            
             
             try:
                 Image.fromarray(blank_img).save(temp_cropped_path)
-		if not os.path.exists(temp_cropped_path):
-			raise IOError("Failed to save temporary file - file not found after save")
+                if not os.path.exists(temp_cropped_path):
+                    raise IOError(f"Failed to save temporary file at {temp_cropped_path}")
             except IOError as e:
                 logger.error(f"Failed to save temporary file: {str(e)}")
                 raise
@@ -283,7 +286,7 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
             raise RuntimeError("Model prediction failed") from e
 
         try:
-            os.remove(temp_mask_path)
+            os.remove(temp_cropped_path)
         except OSError as e:
             logger.error(f"Failed to remove temporary file: {str(e)}")
             raise
@@ -388,8 +391,6 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
         # Remove Background
         combined_mask[goliath_mask == GOLIATH_MAPPING['Background']] = 0
         # Image.fromarray((combined_mask*255).astype(np.uint8)).save("28_background_removed.jpg")
-
-        os.remove(temp_cropped_path)
 
         return combined_mask
         
