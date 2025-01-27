@@ -23,7 +23,7 @@ def create_engines():
     engines = []
     
     for gpu_id, available_memory in available_gpus.items():
-        num_engines = int(available_memory // 65)  # Each engine takes 2GB
+        num_engines = int(available_memory // 17)  # Each engine takes 2GB
         for _ in range(num_engines):
             engine = TryOnInferenceEngine()
             with torch.cuda.device(gpu_id):
