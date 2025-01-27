@@ -18,18 +18,30 @@ def get_available_gpu_memory():
     return available_gpus
 
 def create_engines():
-    """Create multiple engines based on available GPU memory"""
+    """Create at least one engine if GPU is available"""
     available_gpus = get_available_gpu_memory()
     engines = []
     
+    if not available_gpus:
+        # No GPU available, try to create one engine on CPU
+        engine = TryOnInferenceEngine()
+        engine.initialize_model()
+        engines.append(engine)
+        return engines
+        
     for gpu_id, available_memory in available_gpus.items():
+<<<<<<< HEAD
         num_engines = int(available_memory // 20)  # Each engine takes 2GB
+=======
+        # Create at least one engine per GPU if there's any memory available
+        num_engines = max(1, int(available_memory // 75))  # Ensure at least 1 engine
+>>>>>>> refs/remotes/origin/triton-masking-enabled-multiple-engines
         for _ in range(num_engines):
             engine = TryOnInferenceEngine()
             with torch.cuda.device(gpu_id):
                 engine.initialize_model()
             engines.append(engine)
-    
+            
     return engines
 
 class EngineManager:
@@ -71,10 +83,8 @@ class EngineManager:
 if __name__ == "__main__":
     settings = get_settings()
     
-    # Create multiple engines
+    # Create engines
     engines = create_engines()
-    if not engines:
-        raise RuntimeError("No GPU with sufficient memory found")
     
     # Initialize engine manager
     engine_manager = EngineManager(engines)
@@ -84,7 +94,7 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0", 
         port=8002,
-        threads=len(engines) * 2,  # 2 threads per engine
+        threads=max(2, len(engines) * 2),  # At least 2 threads, or 2 per engine
         connection_limit=1000,
         channel_timeout=300,
         ident="TryOn Server"
