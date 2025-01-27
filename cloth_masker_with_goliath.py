@@ -253,8 +253,8 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
             
             try:
                 Image.fromarray(blank_img).save(temp_cropped_path)
-	        if not os.path.exists(temp_cropped_path):
-                    raise IOError("Failed to save temporary file - file not found after save")
+		if not os.path.exists(temp_cropped_path):
+			raise IOError("Failed to save temporary file - file not found after save")
             except IOError as e:
                 logger.error(f"Failed to save temporary file: {str(e)}")
                 raise
