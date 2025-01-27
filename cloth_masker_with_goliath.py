@@ -245,12 +245,11 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
             cropped_img = img[top:bottom, left:right]
             blank_img = np.zeros_like(img)
             blank_img[top:bottom, left:right] = cropped_img
-            
-            tmp_dir = os.path.join(os.getcwd(),"tmp")
-            os.makedirs(tmp_dir, exist_ok=True)
 
+            tmp_dir = os.path.join(os.getcwd(), "tmp")
+            os.makedirs(tmp_dir, exist_ok=True)
             temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
-            temp_cropped_path = os.path.join(f"temp_cropped_{temp_id}.jpg")
+            temp_cropped_path = os.path.join(tmp_dir, f"temp_cropped_{temp_id}.jpg")
             
             try:
                 Image.fromarray(blank_img).save(temp_cropped_path)
