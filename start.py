@@ -30,12 +30,8 @@ def create_engines():
         return engines
         
     for gpu_id, available_memory in available_gpus.items():
-<<<<<<< HEAD
-        num_engines = int(available_memory // 20)  # Each engine takes 2GB
-=======
         # Create at least one engine per GPU if there's any memory available
         num_engines = max(1, int(available_memory // 75))  # Ensure at least 1 engine
->>>>>>> refs/remotes/origin/triton-masking-enabled-multiple-engines
         for _ in range(num_engines):
             engine = TryOnInferenceEngine()
             with torch.cuda.device(gpu_id):
