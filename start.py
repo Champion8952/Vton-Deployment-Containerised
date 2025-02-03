@@ -28,11 +28,9 @@ def save_triton_cache(engine):
                 'optimization_params': {
                     'max_autotune': True,
                     'layout_optimization': True,
-                    'triton.autotune_pointwise': True,
-                    'triton.autotune_cublaslt': True,
+                    'triton.cudagraphs': True,
                     'triton.max_tiles': 2048,
-                    'triton.persistent_reductions': True,
-                    'triton.cudagraphs': True
+                    'triton.persistent_reductions': True
                 }
             }, kernel_config_path)
             
@@ -132,9 +130,7 @@ def create_engine():
             # Use the correct config attributes
             torch._inductor.config.triton.cudagraphs = True
             torch._inductor.config.triton.persistent_reductions = True
-            torch._inductor.config.triton.autotune_cublaslt = True
             torch._inductor.config.triton.max_tiles = 2048
-            torch._inductor.config.triton.persistent_reductions = True
             
             # Enable debug mode if needed
             torch._inductor.config.debug = False
