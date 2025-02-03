@@ -118,6 +118,13 @@ def initialize_caches():
 
 def create_engine():
     """Create single engine with optimized settings"""
+    global _engine  # Add global reference
+    
+    # Check if engine already exists
+    if '_engine' in globals() and _engine is not None:
+        logger.info("Using existing engine instance")
+        return _engine
+        
     if torch.cuda.is_available():
         torch.cuda.set_device(0)
         torch.backends.cudnn.benchmark = True
@@ -147,14 +154,14 @@ def create_engine():
         os.environ['TORCH_COMPILE_CACHE_DIR'] = cache_dir
         
     # Create single engine
-    engine = TryOnInferenceEngine()
-    engine.initialize_model()
+    _engine = TryOnInferenceEngine()
+    _engine.initialize_model()
     
     # Try to load existing Triton cache
-    if not load_triton_cache(engine):
+    if not load_triton_cache(_engine):
         logger.info("No existing Triton cache found, will create new optimizations")
     
-    return engine
+    return _engine
 
 class EngineManager:
     def __init__(self, engine):
@@ -199,7 +206,7 @@ if __name__ == "__main__":
         # Create single engine with cached optimizations
         engine = create_engine()
         
-        # Initialize engine manager
+        # Initialize engine manager (will use existing engine)
         engine_manager = EngineManager(engine)
         app.config['engine_manager'] = engine_manager
         
@@ -207,10 +214,18 @@ if __name__ == "__main__":
         import atexit
         atexit.register(lambda: save_triton_cache(engine))
         
-        # Set socket options at system level if needed
+        # Set socket options at system level
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        
+        # Socket configurations...
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        server_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+        server_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        server_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 262144)
         
         # Configure server with valid waitress settings
         serve(
