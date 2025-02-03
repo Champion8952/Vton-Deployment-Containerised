@@ -31,7 +31,9 @@ def save_triton_cache(engine):
                     'triton.autotune_cublasLt': True,
                     'triton.max_tiles': 2048,
                     'triton.persistent_reductions': True,
-                    'triton.cudagraphs': True
+                    'triton.cudagraphs': True,
+                    'triton.store_cache': True,  # Ensure cache is stored
+                    'triton.load_cache': True    # Ensure cache is loaded
                 }
             }, kernel_config_path)
             
@@ -67,6 +69,10 @@ def load_triton_cache(engine):
                 engine.model.unet._compile_options = cached_data['compile_options']
                 setattr(engine.model.unet, '_kernel_metadata', 
                        cached_data.get('kernel_metadata', {}))
+                
+                # Ensure Triton keeps using the cache
+                torch._inductor.config.triton.store_cache = True
+                torch._inductor.config.triton.load_cache = True
             
         # Load compiled cache
         compile_cache_src = os.path.join(cache_dir, 'compile_cache')
@@ -88,6 +94,15 @@ def create_engine():
         torch.backends.cudnn.deterministic = False
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        
+        # Configure Triton and torch cache settings
+        torch._inductor.config.triton.store_cache = True
+        torch._inductor.config.triton.load_cache = True
+        torch._inductor.config.triton.cudagraphs = True
+        
+        # Keep compilation cache
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:2048'
+        os.environ['TORCH_COMPILE_DEBUG'] = '0'
         
     # Create single engine
     engine = TryOnInferenceEngine()
@@ -115,7 +130,9 @@ class EngineManager:
         while True:
             request_data, result_queue = self.request_queue.get()
             try:
-                result = self.engine.process_request(request_data)
+                # Don't clear cache between requests
+                with torch.cuda.amp.autocast():
+                    result = self.engine.process_request(request_data)
                 result_queue.put((True, result))
             except Exception as e:
                 result_queue.put((False, str(e)))
@@ -151,7 +168,7 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0", 
         port=8002,
-        threads=4,  # Fixed number of threads for single engine
+        threads=4,
         connection_limit=1000,
         channel_timeout=300,
         ident="TryOn Server"
