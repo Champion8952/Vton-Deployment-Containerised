@@ -18,7 +18,7 @@ def get_available_gpu_memory():
     return available_gpus
 
 def create_engines():
-    """Create at least one engine if GPU is available"""
+    """Create engines with optimized settings"""
     available_gpus = get_available_gpu_memory()
     engines = []
     
@@ -30,8 +30,15 @@ def create_engines():
         return engines
         
     for gpu_id, available_memory in available_gpus.items():
-        # Create at least one engine per GPU if there's any memory available
-        num_engines = max(1, int(available_memory // 75))  # Ensure at least 1 engine
+        torch.cuda.set_device(gpu_id)
+        # Optimize GPU settings
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        
+        # Create engines based on available memory
+        num_engines = max(1, int(available_memory // 75))  # Reduced memory requirement
         for _ in range(num_engines):
             engine = TryOnInferenceEngine()
             with torch.cuda.device(gpu_id):

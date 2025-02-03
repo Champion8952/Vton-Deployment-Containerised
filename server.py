@@ -49,6 +49,9 @@ class TryOnInferenceEngine:
         start_time = time.time()
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.cache_dir = os.path.join(os.getcwd(), "model_cache")
+        os.makedirs(self.cache_dir, exist_ok=True)
+        
         self.use_triton = (
             platform.system() == "Linux" and
             CUDA_HOME is not None and
@@ -71,24 +74,77 @@ class TryOnInferenceEngine:
     def initialize_model(self):
         if self.model is not None:
             return
+            
         try:
             logger.info("Loading models...")
             start_time = time.time()
             
+            # Try to load from cache first
+            cache_path = os.path.join(self.cache_dir, "model_cache.pt")
+            if os.path.exists(cache_path):
+                logger.info("Loading model from cache...")
+                try:
+                    cached_state = torch.load(cache_path, map_location=self.device)
+                    self.model, self.densepose, self.atr_model, self.lip_model, self.goliath_model = cached_state
+                    logger.info("Successfully loaded models from cache")
+                    return
+                except Exception as e:
+                    logger.warning(f"Failed to load from cache: {str(e)}. Loading fresh models...")
+            
+            # Load models normally if cache doesn't exist or fails
             self.model, self.densepose, self.atr_model, self.lip_model, self.goliath_model = self._load_models()
+            
+            # Save to cache after successful load
+            logger.info("Saving models to cache...")
+            try:
+                torch.save(
+                    (self.model, self.densepose, self.atr_model, self.lip_model, self.goliath_model),
+                    cache_path
+                )
+                logger.info("Successfully saved models to cache")
+            except Exception as e:
+                logger.warning(f"Failed to save models to cache: {str(e)}")
+            
+            # Compile models if using Triton
             if self.use_triton:
                 try:
-                    logger.info("Compiling models with Triton...")
+                    logger.info("Compiling models with enhanced settings...")
                     compile_options = {
                         "max_autotune": True,
                         "layout_optimization": True,
                         "triton.autotune_pointwise": True,
                         "triton.autotune_cublasLt": True,
-                        "triton.max_tiles": 1024,
-                        "triton.persistent_reductions": True
+                        "triton.max_tiles": 2048,
+                        "triton.persistent_reductions": True,
+                        "triton.cudagraphs": True,
+                        "triton.debug": False,
+                        "max_cache_size": 1024,
+                        "optimize_memory": True,
+                        "dynamic": True
                     }
-                    self.model.unet = torch.compile(self.model.unet, backend='inductor', options=compile_options)
-                    self.model.vae = torch.compile(self.model.vae, backend='inductor', options=compile_options)
+                    
+                    # Save compilation cache
+                    torch._C._jit_set_profiling_executor(True)
+                    torch._C._jit_set_profiling_mode(True)
+                    torch._C._set_graph_executor_optimize(True)
+                    
+                    # Set cache directory for compiled models
+                    os.environ['TORCH_COMPILE_CACHE_DIR'] = os.path.join(self.cache_dir, 'compile_cache')
+                    os.makedirs(os.environ['TORCH_COMPILE_CACHE_DIR'], exist_ok=True)
+                    
+                    self.model.unet = torch.compile(
+                        self.model.unet, 
+                        backend='inductor', 
+                        mode='max-autotune',
+                        options=compile_options
+                    )
+                    self.model.vae = torch.compile(
+                        self.model.vae, 
+                        backend='inductor',
+                        mode='max-autotune',
+                        options=compile_options
+                    )
+                    
                 except Exception as e:
                     logger.warning(f"Failed to compile with Triton: {str(e)}")
                     self.use_triton = False
@@ -196,6 +252,23 @@ class TryOnInferenceEngine:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
+    def cleanup_old_caches(self, max_cache_age_days=7):
+        """Clean up old cache files to prevent disk space issues"""
+        try:
+            current_time = time.time()
+            for cache_file in os.listdir(self.cache_dir):
+                cache_path = os.path.join(self.cache_dir, cache_file)
+                if os.path.isfile(cache_path):
+                    file_age_days = (current_time - os.path.getmtime(cache_path)) / (24 * 3600)
+                    if file_age_days > max_cache_age_days:
+                        os.remove(cache_path)
+                        logger.info(f"Removed old cache file: {cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup old caches: {str(e)}")
+
+    def __del__(self):
+        """Cleanup when the engine is destroyed"""
+        self.cleanup_old_caches()
 
     @torch.inference_mode()       
     async def process_images(self, person_image: Image.Image, cloth_image: Image.Image, 
