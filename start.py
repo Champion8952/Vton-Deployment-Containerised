@@ -207,7 +207,12 @@ if __name__ == "__main__":
         import atexit
         atexit.register(lambda: save_triton_cache(engine))
         
-        # Configure server with optimized settings
+        # Set socket options at system level if needed
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        # Configure server with valid waitress settings
         serve(
             app,
             host="0.0.0.0", 
@@ -216,12 +221,14 @@ if __name__ == "__main__":
             connection_limit=1000,
             channel_timeout=300,
             ident="TryOn Server",
-            # Add server optimizations
             backlog=2048,
             max_request_header_size=262144,
             cleanup_interval=30,
-            socket_options=[(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+            max_request_body_size=1073741824
         )
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
         raise
+    finally:
+        if 'server_socket' in locals():
+            server_socket.close()
