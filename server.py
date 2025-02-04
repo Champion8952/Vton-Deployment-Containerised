@@ -419,6 +419,16 @@ def health_check():
     start_time = time.time()
     logger.info("Received health check request")
     
+    # Get the engine from engine manager
+    engine_manager = app.config.get('engine_manager')
+    if not engine_manager:
+        return jsonify({
+            "status": "unhealthy",
+            "error": "Engine manager not initialized"
+        }), 500
+        
+    engine = engine_manager.engine
+    
     gpu_metrics = {}
     if torch.cuda.is_available():
         try:
@@ -437,7 +447,7 @@ def health_check():
         "status": "healthy",
         "gpu_available": torch.cuda.is_available(),
         "gpu_metrics": gpu_metrics,
-        "model_loaded": engine.model is not None
+        "model_loaded": engine.model is not None if engine else False
     }
     
     logger.info(f"Health check completed in {time.time() - start_time:.2f} seconds")
