@@ -342,23 +342,23 @@ app = Flask(__name__)
 CORS(app)
 
 logger.info("Creating TryOnInferenceEngine instance...")
-engine = TryOnInferenceEngine()
-logger.info("Initializing model...")
-engine.initialize_model()
+# engine = TryOnInferenceEngine()
+# logger.info("Initializing model...")
+# engine.initialize_model()
 
 @app.route("/process_images", methods=['POST'])
 def process_images():
     start_time = time.time()
     logger.info("Received process_images request")
     
-    if engine.model is None:
-        try:
-            logger.info("Model not initialized, initializing now...")
-            engine.initialize_model()
-        except Exception as e:
-            logger.error(f"Failed to initialize model: {str(e)}")
-            return jsonify({"error": f"Failed to initialize model: {str(e)}"}), 500
-
+    # Get the engine manager from app config
+    engine_manager = app.config.get('engine_manager')
+    if not engine_manager:
+        logger.error("Engine manager not initialized")
+        return jsonify({"error": "Server not properly initialized"}), 500
+        
+    engine = engine_manager.engine
+    
     if 'cloth_image' not in request.files or 'human_image' not in request.files:
         logger.error("Missing required files in request")
         return jsonify({"error": "Missing required files"}), 400

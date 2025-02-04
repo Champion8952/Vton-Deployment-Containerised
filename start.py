@@ -134,12 +134,9 @@ def create_engine():
         
         # Configure Triton settings using the correct attribute names
         if hasattr(torch._inductor.config, 'triton'):
-            # Use the correct config attributes
             torch._inductor.config.triton.cudagraphs = True
             torch._inductor.config.triton.persistent_reductions = True
             torch._inductor.config.triton.max_tiles = 2048
-            
-            # Enable debug mode if needed
             torch._inductor.config.debug = False
             torch._inductor.config.trace.enabled = True
             torch._inductor.config.trace.graph_diagram = True
