@@ -132,19 +132,35 @@ class TryOnInferenceEngine:
                     os.environ['TORCH_COMPILE_CACHE_DIR'] = os.path.join(self.cache_dir, 'compile_cache')
                     os.makedirs(os.environ['TORCH_COMPILE_CACHE_DIR'], exist_ok=True)
                     
+                    # First JIT script the models
+                    logger.info("Applying JIT scripting...")
+                    scripted_unet = torch.jit.script(self.model.unet)
+                    scripted_vae = torch.jit.script(self.model.vae)
+                    
+                    # Then apply torch.compile with optimizations
+                    logger.info("Applying torch.compile...")
                     self.model.unet = torch.compile(
-                        self.model.unet, 
+                        scripted_unet,
                         backend='inductor', 
                         mode='max-autotune',
-                        options=compile_options
+                        options=compile_options,
+                        dynamic=True
                     )
                     self.model.vae = torch.compile(
-                        self.model.vae, 
+                        scripted_vae,
                         backend='inductor',
                         mode='max-autotune',
-                        options=compile_options
+                        options=compile_options,
+                        dynamic=True
                     )
                     
+                    # Save the compiled models
+                    logger.info("Saving compiled models...")
+                    compiled_cache_dir = os.path.join(self.cache_dir, 'compiled_models')
+                    os.makedirs(compiled_cache_dir, exist_ok=True)
+                    torch.jit.save(self.model.unet, os.path.join(compiled_cache_dir, 'compiled_unet.pt'))
+                    torch.jit.save(self.model.vae, os.path.join(compiled_cache_dir, 'compiled_vae.pt'))
+
                 except Exception as e:
                     logger.warning(f"Failed to compile with Triton: {str(e)}")
                     self.use_triton = False
