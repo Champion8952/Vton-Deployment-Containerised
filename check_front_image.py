@@ -125,19 +125,59 @@ def analyze_pose(pose_keypoints, face_mapping, image_shape):
 
     # Check if hands are in front of torso
     if analysis['torso_detected'] and 'left_wrist' in keypoint_dict and 'right_wrist' in keypoint_dict:
-        # Define the torso area as a polygon
+        # Define the torso area as a polygon with some padding
+        right_shoulder = np.array(keypoint_dict['right_shoulder'])
+        left_shoulder = np.array(keypoint_dict['left_shoulder'])
+        left_hip = np.array(keypoint_dict['left_hip'])
+        right_hip = np.array(keypoint_dict['right_hip'])
+
+        # Calculate torso width and add padding
+        torso_width = np.linalg.norm(left_shoulder - right_shoulder)
+        padding = torso_width * 0.2  # 20% padding
+
+        # Create padded polygon points
         torso_polygon = Polygon([
-            keypoint_dict['right_shoulder'],
-            keypoint_dict['left_shoulder'],
-            keypoint_dict['left_hip'],
-            keypoint_dict['right_hip']
+            (right_shoulder[0] - padding, right_shoulder[1]),  # right shoulder
+            (left_shoulder[0] + padding, left_shoulder[1]),    # left shoulder
+            (left_hip[0] + padding, left_hip[1]),             # left hip
+            (right_hip[0] - padding, right_hip[1])            # right hip
         ])
 
         # Check if either hand is within the torso polygon
-        left_hand = Point(keypoint_dict['left_wrist'])
-        right_hand = Point(keypoint_dict['right_wrist'])
+        left_wrist = np.array(keypoint_dict['left_wrist'])
+        right_wrist = np.array(keypoint_dict['right_wrist'])
 
-        analysis['is_hands_in_front_of_torso'] = torso_polygon.contains(left_hand) or torso_polygon.contains(right_hand)
+        # Add 5% allowance to the torso boundaries
+        torso_left = min(left_shoulder[0], left_hip[0])
+        torso_right = max(right_shoulder[0], right_hip[0])
+        torso_width = torso_right - torso_left
+        allowance = torso_width * 0.10  # 5% allowance
+        
+        torso_left += allowance  # Move boundary inward
+        torso_right -= allowance  # Move boundary inward
+        
+        torso_top = min(left_shoulder[1], right_shoulder[1])
+        torso_bottom = max(left_hip[1], right_hip[1])
+        torso_height = torso_bottom - torso_top
+        vertical_allowance = torso_height * 0.10  # 5% allowance
+        
+        torso_top += vertical_allowance  # Move boundary inward
+        torso_bottom -= vertical_allowance  # Move boundary inward
+
+        hands_in_torso_region = False
+        
+        # Check if hands are within the torso x-range and y-range
+        for wrist in [left_wrist, right_wrist]:
+            if (torso_right >= wrist[0] >= torso_left and 
+                torso_bottom >= wrist[1] >= torso_top):
+                hands_in_torso_region = True
+                break
+
+        analysis['is_hands_in_front_of_torso'] = (
+            torso_polygon.contains(Point(left_wrist)) or 
+            torso_polygon.contains(Point(right_wrist)) or 
+            hands_in_torso_region
+        )
 
     # Check if hands are straight or slightly bent
     if all(kp in keypoint_dict for kp in ['left_shoulder', 'left_elbow', 'left_wrist', 
@@ -231,19 +271,19 @@ def analyze_image(image_path):
     return analysis
 
 # Main execution
-# if __name__ == "__main__":
+if __name__ == "__main__":
 
-#     # Run a loop on all images in FrontImages folder and store the results in a csv file
-#     image_path = "FrontImages/image12.jpeg"
+    # Run a loop on all images in FrontImages folder and store the results in a csv file
+    image_path = r"C:\Users\AdminAilusion\Desktop\input_beyoug_image_trial\test_image_2.jpeg"
     
-#     assessment = analyze_image(image_path)
+    assessment = analyze_image(image_path)
     
-#     if assessment is not None:
-#         print("\nPosture Assessment:")
-#         for key, value in assessment.items():
-#             if isinstance(value, bool):
-#                 print(f"{key}: {'Yes' if value else 'No'}")
-#             else:
-#                 print(f"{key}: {value}")
-#     else:
-#         print("Failed to process the image.")
+    if assessment is not None:
+        print("\nPosture Assessment:")
+        for key, value in assessment.items():
+            if isinstance(value, bool):
+                print(f"{key}: {'Yes' if value else 'No'}")
+            else:
+                print(f"{key}: {value}")
+    else:
+        print("Failed to process the image.")
