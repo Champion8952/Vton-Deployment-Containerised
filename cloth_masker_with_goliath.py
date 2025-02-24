@@ -392,6 +392,11 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
         combined_mask[goliath_mask == GOLIATH_MAPPING['Background']] = 0
         # Image.fromarray((combined_mask*255).astype(np.uint8)).save("28_background_removed.jpg")
 
+        # increase mask by 5 pixels
+        kernel = np.ones((10,10), np.uint8)
+        combined_mask = binary_dilation(combined_mask, kernel, iterations=1)
+        combined_mask = binary_erosion(combined_mask, kernel, iterations=1)
+
         return combined_mask
         
     except Exception as e:
