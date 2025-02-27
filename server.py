@@ -360,6 +360,7 @@ CORS(
     resources={
         r"/*": {
             "origins": [
+                "https://demo.ailusion.in",
                 r"^https?:\/\/ailusion\.in(?::\d+)?$",
                 r"^https?:\/\/.*\.ailusion\.in(?::\d+)?$",
                 r"^https?:\/\/localhost(?::\d+)?$"
