@@ -361,7 +361,8 @@ CORS(
         r"/*": {
             "origins": [
                 r"^https?:\/\/ailusion\.in(?::\d+)?$",
-                r"^https?:\/\/.*\.ailusion\.in(?::\d+)?$"
+                r"^https?:\/\/.*\.ailusion\.in(?::\d+)?$",
+                r"^https?:\/\/localhost(?::\d+)?$"
             ]
         }
     }
