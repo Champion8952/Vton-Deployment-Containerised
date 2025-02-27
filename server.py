@@ -355,7 +355,17 @@ class TryOnInferenceEngine:
             raise RuntimeError(f"Failed during processing: {str(e)}")
 
 app = Flask(__name__)
-CORS(app)
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": [
+                r"^https?:\/\/ailusion\.in(?::\d+)?$",
+                r"^https?:\/\/.*\.ailusion\.in(?::\d+)?$"
+            ]
+        }
+    }
+)
 
 logger.info("Creating TryOnInferenceEngine instance...")
 # engine = TryOnInferenceEngine()
