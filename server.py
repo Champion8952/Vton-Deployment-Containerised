@@ -334,8 +334,8 @@ def process_images():
         resolution = request.form.get('resolution', "768x1024")
         
         # Process images
-        vton_img = Image.open(request.files['vton_image']).convert('RGB')
-        garm_img = Image.open(request.files['garm_image']).convert('RGB')
+        vton_img = Image.open(request.files['human_image']).convert('RGB')
+        garm_img = Image.open(request.files['cloth_image']).convert('RGB')
         
         results = engine.process_images(
             vton_img, garm_img,
