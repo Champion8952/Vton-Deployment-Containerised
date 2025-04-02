@@ -198,7 +198,7 @@ def analyze_pose(pose_keypoints, face_mapping, image_shape):
 
 def detect_humans(image):
     """Detect humans in the image using YOLOv5"""
-    model = YOLO('yolov5su.pt')
+    model = YOLO('models/yolov5su.pt')
     img_np = np.array(image)
     results = model(img_np)
     detections = results[0].boxes.data
