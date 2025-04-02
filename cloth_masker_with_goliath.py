@@ -218,7 +218,13 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
 
         # Get DensePose mask and resize
         try:
+            torch.cuda.empty_cache()
             dense_output = densepose(image_path)
+
+            if isinstance(dense_output, torch.Tensor):
+                dense_output = dense_output.float()  # Convert to FP32 if it's in FP16/BF16
+                dense_output = dense_output.detach().cpu().numpy()
+
             dense_mask = np.array(dense_output)
             dense_mask = resize_mask(dense_mask, height, width)
         except Exception as e:
@@ -251,8 +257,6 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
             cropped_img = img[top:bottom, left:right]
             blank_img = np.zeros_like(img)
             blank_img[top:bottom, left:right] = cropped_img
-
-            
             
             try:
                 Image.fromarray(blank_img).save(temp_cropped_path)
@@ -390,12 +394,12 @@ def visualize_dense_labels(image_path, densepose, atr_model, lip_model, goliath_
 
         # Remove Background
         combined_mask[goliath_mask == GOLIATH_MAPPING['Background']] = 0
-        # Image.fromarray((combined_mask*255).astype(np.uint8)).save("28_background_removed.jpg")
 
-        # # increase mask by 5 pixels
-        # kernel = np.ones((10,10), np.uint8)
-        # combined_mask = binary_dilation(combined_mask, kernel, iterations=1)
-        # combined_mask = binary_erosion(combined_mask, kernel, iterations=1)
+        # Remove right and left hands
+        for label in GOLIATH_LABELS_TO_REMOVE:
+            if label in GOLIATH_MAPPING:
+                combined_mask[goliath_mask == GOLIATH_MAPPING[label]] = 0
+        # Image.fromarray((combined_mask*255).astype(np.uint8)).save("28_background_removed.jpg")
 
         return combined_mask
         
