@@ -320,31 +320,19 @@ def process_images():
     start_time = time.time()
     logger.info("Received process_images request")
     
-    if 'vton_image' not in request.files or 'garm_image' not in request.files:
+    if 'human_image' not in request.files or 'cloth_image' not in request.files:
         logger.error("Missing required files in request")
         return jsonify({"error": "Missing required files"}), 400
 
     try:
-        # Get parameters from request
-        category = request.form.get('category', "Upper-body")
-        n_steps = int(request.form.get('n_steps', 20))
-        image_scale = float(request.form.get('image_scale', 2.0))
-        seed = int(request.form.get('seed', -1))
-        num_images = int(request.form.get('num_images', 1))
-        resolution = request.form.get('resolution', "768x1024")
+        
         
         # Process images
         vton_img = Image.open(request.files['human_image']).convert('RGB')
         garm_img = Image.open(request.files['cloth_image']).convert('RGB')
         
         results = engine.process_images(
-            vton_img, garm_img,
-            category=category,
-            n_steps=n_steps,
-            image_scale=image_scale,
-            seed=seed,
-            num_images_per_prompt=num_images,
-            resolution=resolution
+            vton_img, garm_img
         )
         
         # Return first image (can be modified to return multiple images if needed)
