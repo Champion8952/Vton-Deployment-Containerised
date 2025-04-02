@@ -11,7 +11,7 @@ import logging
 import time
 import random
 from typing import List
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from preprocess.humanparsing.run_parsing import Parsing
 from check_front_image import analyze_image
 from preprocess.dwpose import DWposeDetector
@@ -95,6 +95,21 @@ class TryOnInferenceEngine:
             raise Exception(f"Failed to initialize model: {str(e)}")
 
     def _load_models(self):
+        # First check if models exist, if not download them
+        if not os.path.exists(self.repo_path) or not os.listdir(self.repo_path):
+            logger.info("Models not found locally. Downloading from Hugging Face...")
+            try:
+                snapshot_download(
+                    repo_id="Roopansh/Ailusion-Dit-Vton",
+                    local_dir=self.repo_path,
+                    token=None,  # Add your HF token if the model is gated
+                    ignore_patterns=["*.md", "*.txt", "*.jpg"],
+                )
+                logger.info("Models downloaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to download models: {str(e)}")
+                raise
+
         transformer_garm = SD3Transformer2DModel_Garm.from_pretrained(
             os.path.join(self.repo_path, "transformer_garm"), 
             torch_dtype=self.weight_dtype
