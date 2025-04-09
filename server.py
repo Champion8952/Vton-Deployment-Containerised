@@ -11,7 +11,7 @@ import logging
 import time
 import random
 from typing import List
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download, login
 from preprocess.humanparsing.run_parsing import Parsing
 from check_front_image import analyze_image
 from preprocess.dwpose import DWposeDetector
@@ -24,6 +24,8 @@ from src.transformer_sd3_vton import SD3Transformer2DModel as SD3Transformer2DMo
 from model.SCHP import SCHP
 from model.DensePose import DensePose
 from src.utils_mask import get_mask_location
+from dotenv import load_dotenv
+from config import get_settings
 
 # Configure logging
 logging.basicConfig(
@@ -33,10 +35,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def setup_huggingface():
+    """Setup Hugging Face authentication"""
+    try:
+        settings = get_settings()
+        hf_token = settings.huggingface_token
+        
+        if not hf_token:
+            logger.warning("No Hugging Face token found in environment variables or .env file")
+            return False
+        
+        login(token=hf_token)
+        logger.info("Successfully logged in to Hugging Face")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to login to Hugging Face: {str(e)}")
+        return False
+
 class TryOnInferenceEngine:
     def __init__(self):
         logger.info("Initializing TryOnInferenceEngine")
         start_time = time.time()
+        
+        # Setup Hugging Face authentication
+        self.settings = get_settings()
+        self.hf_authenticated = setup_huggingface()
+        if not self.hf_authenticated:
+            logger.warning("Running without Hugging Face authentication. Some features may be limited.")
         
         self.device = "cuda"
         self.weight_dtype = torch.bfloat16
@@ -139,7 +164,7 @@ class TryOnInferenceEngine:
                 snapshot_download(
                     repo_id="Roopansh/Ailusion-Dit-Vton",
                     local_dir=self.repo_path,
-                    token=None,  # Add your HF token if the model is gated
+                    token=self.settings.huggingface_token,
                     ignore_patterns=["*.md", "*.txt", "*.jpg"],
                 )
                 logger.info("Models downloaded successfully")
