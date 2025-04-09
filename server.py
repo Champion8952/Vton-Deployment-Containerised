@@ -71,11 +71,7 @@ class TryOnInferenceEngine:
         self.repo_path = os.path.join(os.path.dirname(__file__), 'models')
         self.pipeline = None
         self.dwprocessor = None
-        self.densepose = None
-        self.atr_model = None
-        self.lip_model = None
         self.parsing_model = None
-        self.goliath_model = None
         self.models_path = "models/"
         
         logger.info(f"TryOnInferenceEngine initialized in {time.time() - start_time:.2f} seconds")
@@ -128,7 +124,7 @@ class TryOnInferenceEngine:
                 logger.info("Loading model from cache...")
                 try:
                     cached_state = torch.load(cache_path, map_location=self.device)
-                    self.pipeline, self.dwprocessor, self.densepose, self.atr_model, self.lip_model, self.parsing_model, self.goliath_model = cached_state
+                    self.pipeline, self.dwprocessor, self.parsing_model = cached_state
                     logger.info("Successfully loaded models from cache")
                     return
                 except Exception as e:
@@ -143,7 +139,7 @@ class TryOnInferenceEngine:
             logger.info("Saving models to cache...")
             try:
                 torch.save(
-                    (self.pipeline, self.dwprocessor, self.densepose, self.atr_model, self.lip_model, self.parsing_model, self.goliath_model),
+                    (self.pipeline, self.dwprocessor, self.parsing_model),
                     cache_path
                 )
                 logger.info("Successfully saved models to cache")
@@ -203,15 +199,6 @@ class TryOnInferenceEngine:
         image_encoder_large.to(device=self.device)
         image_encoder_bigG.to(device=self.device)
         
-        # Initialize Goliath model
-        goliath_model = torch.jit.load(
-            hf_hub_download(
-                repo_id="Roopansh/Ailusion-Goliath-Segmentation",
-                filename="sapiens_1b_goliath_best_goliath_mIoU_7994_epoch_151_torchscript.pt2",
-                cache_dir="pretrained"
-            )
-        ).to(self.device)
-        
         self.pipeline = StableDiffusion3TryOnPipeline.from_pretrained(
             self.repo_path,
             torch_dtype=self.weight_dtype,
@@ -224,13 +211,9 @@ class TryOnInferenceEngine:
         self.pipeline.to(self.device)
         
         self.dwprocessor = DWposeDetector(model_root=self.repo_path, device=self.device)
-        self.densepose = DensePose(os.path.join(os.getcwd(), 'pretrained'), device="cuda")
-        self.atr_model = SCHP(ckpt_path=os.path.join(os.getcwd(), 'pretrained/exp-schp-201908301523-atr.pth'), device="cuda")
-        self.lip_model = SCHP(ckpt_path=os.path.join(os.getcwd(), 'pretrained/exp-schp-201908261155-lip.pth'), device="cuda")
         self.parsing_model = Parsing(model_root=self.repo_path, device=self.device)
-        self.goliath_model = goliath_model
         
-        return self.pipeline, self.dwprocessor, self.densepose, self.atr_model, self.lip_model, self.parsing_model, self.goliath_model
+        return self.pipeline, self.dwprocessor, self.parsing_model
 
     @staticmethod
     def pad_and_resize(im, new_width=768, new_height=1024, pad_color=(255, 255, 255), mode=Image.LANCZOS):
