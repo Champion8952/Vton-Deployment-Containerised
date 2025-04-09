@@ -51,8 +51,43 @@ class TryOnInferenceEngine:
         self.lip_model = None
         self.parsing_model = None
         self.goliath_model = None
+        self.models_path = "models/"
         
         logger.info(f"TryOnInferenceEngine initialized in {time.time() - start_time:.2f} seconds")
+
+    
+    def load_grounding_dino_model(self, model_name):
+        """Load Grounding DINO model for object detection"""
+        try:
+            from groundingdino.util.inference import Model
+            model_path = os.path.join(self.models_path, model_name)
+            config_path = os.path.join(self.models_path, "GroundingDINO_SwinT_OGC.cfg.py")
+            model = Model(model_checkpoint_path=model_path, model_config_path=config_path)
+            # Test if model loaded correctly
+            if model is None:
+                print("Failed to initialize Grounding DINO model")
+                return None
+            return model
+        except Exception as e:
+            print(f"Error loading Grounding DINO: {e}")
+            return None
+
+    def load_sam_model(self, model_name):
+        """Load Segment Anything Model"""
+        try:
+            from segment_anything import sam_model_registry, SamPredictor
+            model_path = os.path.join(self.models_path, model_name)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            sam = sam_model_registry["vit_h"](checkpoint=None)
+            checkpoint = torch.load(model_path, map_location=device)
+            state_dict = {k: v for k, v in checkpoint.items() if k in sam.state_dict()}
+            sam.load_state_dict(state_dict, strict=False)
+            sam.to(device=device)
+            return SamPredictor(sam)
+        except Exception as e:
+            print(f"Error loading SAM: {e}")
+            return None
+
 
     def initialize_model(self):
         if self.pipeline is not None:
@@ -76,7 +111,9 @@ class TryOnInferenceEngine:
             
             # Load models normally if cache doesn't exist or fails
             self._load_models()
-            
+            self.grounding_dino = self.load_grounding_dino_model("groundingdino_swint_ogc.pth")
+            self.sam_model = self.load_sam_model("sam_hq_vit_h.pth")
+
             # Save to cache after successful load
             logger.info("Saving models to cache...")
             try:
@@ -203,6 +240,101 @@ class TryOnInferenceEngine:
         new_height = int(round(height * scale))
         return img.resize((new_width, new_height), Image.LANCZOS)
 
+    def fallback_segmentation(self, image):
+        """Fallback method when segmentation models fail"""
+        # Return the original image and a white mask of the same size
+        width, height = image.size
+        white_mask = Image.new('L', (width, height), 255)
+        return white_mask, image
+
+    def extract_mask(self, image, prompt, confidence_threshold=0.3):
+        """Extract mask using Grounding DINO and SAM"""
+        try:
+            if not hasattr(self, 'grounding_dino') or self.grounding_dino is None:
+                logger.info("No Grounding DINO model, using fallback")
+                return self.fallback_segmentation(image)
+            
+            if not hasattr(self, 'sam_model') or self.sam_model is None:
+                logger.info("No SAM model, using fallback")
+                return self.fallback_segmentation(image)
+            
+            # Convert to RGB numpy array
+            img_array = np.array(image.convert('RGB'))
+            
+            try:
+                # Get bounding boxes
+                if hasattr(self.grounding_dino, 'predict_with_caption'):
+                    detections = self.grounding_dino.predict_with_caption(
+                        image=img_array,
+                        caption=prompt,
+                        box_threshold=confidence_threshold
+                    )
+                    boxes = detections[0].xyxy
+                elif hasattr(self.grounding_dino, 'predict'):
+                    boxes = self.grounding_dino.predict(
+                        image=img_array,
+                        text=prompt,
+                        box_threshold=confidence_threshold
+                    )
+                elif hasattr(self.grounding_dino, 'detect'):
+                    boxes = self.grounding_dino.detect(
+                        image=img_array,
+                        text=prompt,
+                        threshold=confidence_threshold
+                    )
+                else:
+                    logger.warning("No valid detection method found")
+                    return self.fallback_segmentation(image)
+                
+                if boxes is None or len(boxes) == 0:
+                    logger.warning("No boxes detected")
+                    return self.fallback_segmentation(image)
+                
+                # Set image for SAM
+                self.sam_model.set_image(img_array)
+                
+                # Process first detected box
+                box = boxes[0]
+                box_for_sam = np.array([
+                    float(box[0]), float(box[1]),  # x1, y1
+                    float(box[2]), float(box[3])   # x2, y2
+                ])
+                
+                # Get SAM prediction
+                masks, scores, _ = self.sam_model.predict(
+                    point_coords=None,
+                    point_labels=None,
+                    box=box_for_sam[None, :],  # Add batch dimension
+                    multimask_output=True
+                )
+                
+                if masks is None or len(masks) == 0:
+                    logger.warning("No masks generated")
+                    return self.fallback_segmentation(image)
+                
+                # Get best mask
+                best_mask_idx = np.argmax(scores)
+                mask = masks[best_mask_idx].astype(np.uint8) * 255
+                
+                # Create masked image
+                masked_image = img_array.copy()
+                masked_image[mask == 0] = [255, 255, 255]  # Set background to white
+                
+                # Convert to PIL images
+                mask_pil = Image.fromarray(mask)
+                masked_image_pil = Image.fromarray(masked_image)
+                
+                return mask_pil, masked_image_pil
+                
+            except Exception as e:
+                logger.error(f"Error in mask generation: {str(e)}")
+                return self.fallback_segmentation(image)
+        
+        except Exception as e:
+            logger.error(f"Error in extract_mask: {str(e)}")
+            return self.fallback_segmentation(image)
+
+
     @torch.inference_mode()
     def process_images(self, vton_img: Image.Image, garm_img: Image.Image, 
                       category: str = "Upper-body",
@@ -218,7 +350,17 @@ class TryOnInferenceEngine:
         try:
             # Parse resolution
             new_width, new_height = map(int, resolution.split("x"))
-            
+
+            # Resize the Garment Image
+            garm_img, _, _ = self.pad_and_resize(garm_img, new_width, new_height)
+
+            # Extract the segmented garment image from the garm_img
+            garment_mask, garment_mask_image = self.extract_mask(garm_img, "Upper Clothes",0.3)
+
+            # Replace the garment image with the segmented garment image
+            garm_img = garment_mask_image
+            garm_img = garm_img.convert("RGB")
+
             # Save temporary image for mask generation
             temp_id = f"{int(time.time())%10000:04d}{''.join(random.choices('0123456789', k=4))}"
             temp_path = os.path.join("model", f"temp_input_{temp_id}.jpg")
@@ -274,10 +416,6 @@ class TryOnInferenceEngine:
             
             if seed == -1:
                 seed = random.randint(0, 2147483647)
-                
-            # View the mask for debugging
-            logger.info(f"Mask shape: {np.array(mask).shape}")
-            logger.info(f"Mask unique values: {np.unique(np.array(mask))}")
             
             # Generate images
             results = self.pipeline(
